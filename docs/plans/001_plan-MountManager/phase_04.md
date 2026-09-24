@@ -99,8 +99,10 @@ Plan revision: 1.
     ev := waitEvent failure_detected (40s); assert `strings.Contains(ev.Detail, "probe timeout")` (Summary include tutti i failure: con container
     in pausa il probe deve andare in timeout senza bloccare il loop); waitEvent recovery_started (10s) e recovery_succeeded (240s);
     hostMountHealthy; containerState(rclone-mount) == "running"; `runCheck(e) == 0` [I-3, I-7].
-  - `TestE2E_StaleMountCleanedWhenIdle` (E5): up `--wait`; (manager NON avviato) `docker kill rclone-mount`; precondizione:
-    `errors.Is(statErr(mountPath), syscall.ENOTCONN)` altrimenti Fatal "precondition: expected stale mount (R10)"; `compose down -t 5`;
+  - `TestE2E_StaleMountCleanedWhenIdle` (E5): up `--wait`; (manager NON avviato) `docker kill rclone-mount`; precondizione (rev 2):
+    `errors.Is(waitStale(mountPath, 10s), syscall.ENOTCONN)` — polling ogni 500ms di `statErr` + `readDirErr` (timeout 5s ciascuno),
+    perché lo stat della radice può essere servito dalla cache attributi del kernel subito dopo il kill (rev 1: singolo `statErr`,
+    fallito al primo run) — altrimenti Fatal "precondition: expected stale mount (R10)"; `compose down -t 5`;
     precondizione `mountPresent` true; startManager; waitEvent stale_mount_cleaned (20s); `mountPresent` false; `time.Sleep(5s)`;
     assertNoEvent recovery_started (da 0); `docker compose ps -a -q` vuoto [D14, I-1].
   - `TestE2E_PartialStackAfterBootRecovers` (E6): up `--wait`; `compose stop rclone-mount` (timeout 60s); precondizione containerState(superdufs)=="running";

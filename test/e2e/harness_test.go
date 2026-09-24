@@ -537,6 +537,103 @@ func (e *env) teardown() {
 	}
 }
 
+// requireRoot fails the test (via t.Fatal, not t.Skip: a silently skipped
+// root scenario would report green without ever running) unless the test
+// process is running as root.
+func requireRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Fatal("root required: run via e2e-root.sh")
+	}
+}
+
+// containerID returns the full container ID of the named container, failing
+// the test on error.
+func containerID(e *env, name string) string {
+	e.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.Id}}", name).CombinedOutput()
+	if err != nil {
+		e.t.Fatalf("docker inspect -f {{.Id}} %s: %v\n%s", name, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// containerState returns the named container's State.Status (e.g.
+// "running", "paused", "exited"), failing the test on error.
+func containerState(e *env, name string) string {
+	e.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}}", name).CombinedOutput()
+	if err != nil {
+		e.t.Fatalf("docker inspect -f {{.State.Status}} %s: %v\n%s", name, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// statErr runs os.Stat(path) in a goroutine and returns its error, or an
+// error "stat timeout" if it does not complete within 5s (a stale FUSE
+// mount can hang stat indefinitely).
+func statErr(path string) error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := os.Stat(path)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("stat timeout")
+	}
+}
+
+// waitStale polls path with statErr and a bounded directory read every
+// 500ms until one of them fails with ENOTCONN or timeout elapses; it returns
+// the last error observed (nil if the path stayed readable).
+func waitStale(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := statErr(path)
+		if err == nil {
+			err = readDirErr(path)
+		}
+		if errors.Is(err, syscall.ENOTCONN) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// readDirErr runs os.ReadDir(path) in a goroutine and returns its error, or
+// "readdir timeout" after 5s.
+func readDirErr(path string) error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := os.ReadDir(path)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("readdir timeout")
+	}
+}
+
+// mountPresent reports whether the host's own mountinfo shows any mount
+// stacked at e.mountPath.
+func mountPresent(e *env) bool {
+	entries, err := mountinfo.Read()
+	if err != nil {
+		return false
+	}
+	_, ok := mountinfo.Top(entries, e.mountPath)
+	return ok
+}
+
 // printLastLines prints up to the last n lines of path via t.Logf.
 func printLastLines(t *testing.T, path string, n int) {
 	t.Helper()

@@ -1,7 +1,7 @@
 # MountManager — Implementation state
 
 Read first at every session. Updated 2026-09-24 by agent-1:opus (Claude Opus 5.5, planning session).
-Plan ID: 001_plan-MountManager. Revision: 1. Repo root: /mnt/fabio/dati/Git/SperimentazioniAI/mount-manager.
+Plan ID: 001_plan-MountManager. Revision: 2 (see §8). Repo root: /mnt/fabio/dati/Git/SperimentazioniAI/mount-manager.
 Plan baseline: `dec2c80` (`chore: baseline before plan 001`, branch main; files: `.gitignore`, `compose.yml` original,
 `Specifications.txt`, `docs/plans/001_plan-MountManager/`), created by unit 0.1 S1 on 2026-09-24. Pre-existing user files: `compose.yml`, `Specifications.txt`
 (authored by the user; preserve). Plan files in `docs/plans/001_plan-MountManager/` were authored for this request (provenance: planning session 2026-09-24).
@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 3.1 / 1
-- Status: CLOSED (commit reference unit:3.1:1)
-- Intent: systemd unit and example config
+- ID / attempt: 3.2 / 1
+- Status: CLOSED (commit reference unit:3.2:1)
+- Intent: root entrypoint and e2e scenarios E3–E6
 - Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_04.md §3.1
+- File / unit heading: phase_04.md §3.2
 - Current step: none
-- Next action: open 3.2 (phase_04.md §3.2) S1.
-- Next eligible plan unit: 3.2 / phase_04.md
-- Unit base: fd9ed3c; branch: main; owned changes: deploy/*, internal/config/config_test.go
+- Next action: open 3.3 (phase_04.md §3.3) S1.
+- Next eligible plan unit: 3.3 / phase_04.md
+- Unit base: b387e76; branch: main; owned changes: e2e-root.sh, test/e2e/harness_test.go (helpers), test/e2e/recovery_test.go
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -185,7 +185,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 2.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | cmd/mount-manager/main{,_test}.go (+run, shared buildDeps(cfg)) | G-U2.3 10 cmd PASS; -race ./... ok | unit:2.3:1 (8ec306d) |
 | sub-phase | 2.4 / 1 | 1 | agent-2:sonnet + agent-1:opus (preflight fix, S4 run, README Stato) | test/e2e/{harness,scenarios}_test.go, README Test+Stato | G-FMT-E2E ok; G-E2E-NR 2 PASS (22s), no residue; review §7 | unit:2.4:1 (a0b8e15) |
 | phase-close | P2 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-FMT-E2E, G-UNIT (125 PASS ≥104), G-E2E-NR pass; P2 review §7 | unit:P2:1 (fd9ed3c) |
-| sub-phase | 3.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus: 3 comment fixes) | deploy/mount-manager.service, deploy/config.example.yml, internal/config/config_test.go | G-U3.1 1 PASS; G-SYSTEMD pass (no diagnostics, no forbidden directive) | unit:3.1:1 |
+| sub-phase | 3.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus: 3 comment fixes) | deploy/mount-manager.service, deploy/config.example.yml, internal/config/config_test.go | G-U3.1 1 PASS; G-SYSTEMD pass (no diagnostics, no forbidden directive) | unit:3.1:1 (b387e76) |
+| sub-phase | 3.2 / 1 | 2 | agent-2:sonnet + agent-1:opus (rev 2 waitStale fix, S4 runs) | e2e-root.sh (0755), test/e2e/harness_test.go (+helpers, waitStale/readDirErr), test/e2e/recovery_test.go | G-FMT-E2E ok; G-E2E-ROOT run 1: 5/6 (E5 precondition) → rev 2 → run 2: 6/6 PASS, no residue; review §7 | unit:3.2:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -234,6 +235,8 @@ none
 | G-FMT-E2E + G-E2E-NR (2.4 S4) | as §3 | pass | `--- PASS: TestE2E_WaitThenMonitor` (7.31s), `--- PASS: TestE2E_ManualDownNoRecovery` (14.81s), `ok`; no containers/mounts/work dirs left | 8ec306d + 2.4 diff | 2026-09-24 |
 | P2: G-FMT, G-FMT-E2E, G-UNIT (+ G-E2E-NR above, code unchanged since) | as §3 | pass | 11 packages ok (+recovery, supervisor); 125 `--- PASS` ≥104 | 2.4 closure tree | 2026-09-24 |
 | G-U3.1 + G-SYSTEMD + G-FMT | as §3 | pass | TestExampleConfigLoads PASS; systemd-analyze verify: no line mentions mount-manager.service; forbidden grep empty | fd9ed3c + 3.1 diff | 2026-09-24 |
+| G-E2E-ROOT run 1 | `sudo -n <repo>/e2e-root.sh -test.run '^TestE2E_'` | fail | 5 PASS; E5 `precondition: expected stale mount (R10): statErr(mountPath) = <nil>` | b387e76 + 3.2 diff (rev 1) | 2026-09-24 |
+| G-E2E-ROOT run 2 | same | pass | 6 `--- PASS:` (E3 10.93s, E4 17.21s, E5 9.03s, E6 14.28s, E1 7.36s, E2 14.80s), final `PASS`; no containers, mounts or work dirs left | b387e76 + 3.2 diff (rev 2) | 2026-09-24 |
 | G-UNIT (later phases), other G-U*, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
@@ -248,6 +251,7 @@ none
 | 2.2 after-diff review | agent-1:opus | rev 1; base 95ce70b + 2.2 diff | Step/runRecovery/enterBackoff/Run/Backoff line-by-line vs §State machine; I-1 (idle in Waiting/Monitoring never recovers), I-7 (Run exits on ctx cancel), I-8 via Recover; single goroutine, no mutex. Identifier fix approved: state const `Backoff` → `StateBackoff` (plan collided with func `Backoff`; String() still "backoff"; no behavior change) | pass |
 | 2.4 after-diff review | agent-1:opus | rev 1; base 8ec306d + 2.4 diff | I-6 (generated alias rclone.conf only, assertRemoteIsLocal, work dir under test/e2e/.work; fix: preflight now `docker pull <img>` instead of compose on repo dir), oracles E1/E2 as specified, teardown order (manager → down → unmount/fusermount3 → RemoveAll), hostMountHealthy with 5s timeout | pass after fix |
 | P2 phase review | agent-1:opus | rev 1; 8ec306d..2.4 closure | integration run→supervisor→health/recovery/notify verified end-to-end by E1/E2; I-1 (E2 + unit), I-2 (TestCleanupRefusesForeignFSType), I-6 (harness), I-7 (TestRunStopsOnContextCancel, timeouts), I-8 (TestRecoverSequence*); README Test/Stato accurate. Noted risk for E2 flakiness (threshold 2 @1s during manual down) — not observed | pass |
+| 3.2 after-diff review | agent-1:opus | rev 2; base b387e76 + 3.2 diff | e2e-root.sh byte-exact to contract (root check, prebuilt binaries, absolute path), no other root-dir executable; requireRoot Fatal (no zero-discovery green); I-6 via shared harness; oracles E3–E6 as specified; E5 precondition fixed (rev 2) without weakening | pass |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -255,6 +259,7 @@ none
 | Revision | Previous decision/step | Approved replacement and reason | Supervisor | Dependents/revalidation |
 |----------|------------------------|---------------------------------|------------|------------------------|
 | 1 | — | initial plan | agent-1:opus | — |
+| 2 | phase_04.md 3.2 E5 precondition: single `statErr(mountPath)` must be ENOTCONN right after `docker kill` | Poll `waitStale(mountPath, 10s)` (statErr + readDirErr every 500ms). Reason: first G-E2E-ROOT run returned nil — stat of the FUSE root was answered from the kernel attr cache (rclone attr_timeout 1s) and/or before the daemon exited. R10 not contradicted; oracle (stale ENOTCONN mount) unchanged | agent-1:opus | 3.2 only; revalidate by full G-E2E-ROOT rerun |
 
 ## 9. Blockers
 
@@ -285,7 +290,7 @@ none
 | 2.3 | phase_03.md | 2.2 | DONE | 1 | G-U2.3 PASS |
 | 2.4 | phase_03.md | 2.3 | DONE | 1 | G-E2E-NR 2 PASS; supervisor review pass |
 | 3.1 | phase_04.md | P2 | DONE | 1 | G-U3.1, G-SYSTEMD pass |
-| 3.2 | phase_04.md | P2 | TODO | 1 | — |
+| 3.2 | phase_04.md | P2 | DONE | 1 | G-E2E-ROOT 6 PASS (rev 2); supervisor review pass |
 | 3.3 | phase_04.md | 3.1, 3.2 | TODO | 1 | — |
 
 Execution order: 0.1 → 0.2 → 0.3 → 0.4 → P0 → 1.1 → 1.2 → 1.3 → P1 → 2.1 → 2.2 → 2.3 → 2.4 → P2 → 3.1 → 3.2 → 3.3 → P3.
@@ -322,10 +327,10 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestRecover{SequenceHealthyMount,AbortFirst,PostDownStaleCleanup,DownFailsFallsBackToKill,DownAndFallbackFail,UpFails,ContextCanceled} (I-8), TestCleanup{RefusesForeignFSType (I-2),StackedMounts,GivesUpAfterMax,NoMount} | 2.1 | G-U2.1 | PASS | 2026-09-24 coordinator rerun |
 | TestStartEmitsStartupAndWaiting, TestWaiting{IdleStaysWaiting (I-1),ToMonitoringOnOK,StaleMountCleaned,GraceThenRecovery,GraceResetsWhenIdle}, TestMonitoring{ThresholdTriggersRecovery,IdleGoesWaiting (I-1)}, TestRecoveryAbortFirstFlag, TestVerifying{Success,IgnoresIdle,TimeoutBackoff}, TestRecoverErrorGoesBackoff, TestBackoffSequence, TestRunStopsOnContextCancel (I-7) | 2.2 | G-U2.2 | PASS | 2026-09-24 coordinator rerun -race |
 | TestRunCommand{MissingConfig,InvalidConfig,MissingDocker}, TestUsageListsCommands | 2.3 | G-U2.3 | PASS | 2026-09-24 coordinator rerun |
-| TestE2E_WaitThenMonitor (E1), TestE2E_ManualDownNoRecovery (E2, I-1) | 2.4 | G-E2E-NR, G-E2E-ROOT | PASS (G-E2E-NR as user; ROOT pending 3.2) | 2026-09-24: 7.31s, 14.81s |
+| TestE2E_WaitThenMonitor (E1), TestE2E_ManualDownNoRecovery (E2, I-1) | 2.4 | G-E2E-NR, G-E2E-ROOT | PASS (user and root) | G-E2E-NR 7.31s/14.81s; ROOT 7.36s/14.80s |
 | TestExampleConfigLoads | 3.1 | G-U3.1 | PASS | 2026-09-24 coordinator rerun |
 | G-SYSTEMD static check (I-4) | 3.1 | G-SYSTEMD | PASS | both greps empty |
-| TestE2E_KillRcloneRecovers (E3), TestE2E_PausedRcloneRecovers (E4, I-3/I-7), TestE2E_StaleMountCleanedWhenIdle (E5), TestE2E_PartialStackAfterBootRecovers (E6) | 3.2 | G-E2E-ROOT | TODO | — |
+| TestE2E_KillRcloneRecovers (E3), TestE2E_PausedRcloneRecovers (E4, I-3/I-7), TestE2E_StaleMountCleanedWhenIdle (E5), TestE2E_PartialStackAfterBootRecovers (E6) | 3.2 | G-E2E-ROOT | PASS | 10.93s, 17.21s, 9.03s, 14.28s (run 2, rev 2) |
 
 ### Documentation
 | Document/sections | Owning unit | Status | Evidence |
