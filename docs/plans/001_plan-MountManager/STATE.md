@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 1.2 / 1
-- Status: CLOSED (commit reference unit:1.2:1)
-- Intent: package notify (webhook)
-- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_02.md §1.2
+- ID / attempt: 1.3 / 1
+- Status: CLOSED (commit reference unit:1.3:1)
+- Intent: package health and `check` command
+- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus (review after diff)
+- File / unit heading: phase_02.md §1.3
 - Current step: none
-- Next action: open 1.3 (phase_02.md §1.3) S1.
-- Next eligible plan unit: 1.3 / phase_02.md
-- Unit base: 0e371e3; branch: main; owned changes: internal/notify/*
+- Next action: P1 closure (gates already green on this tree, see §7) then open 2.1.
+- Next eligible plan unit: P1 / phase_02.md
+- Unit base: 5bd9aea; branch: main; owned changes: internal/health/*, cmd/mount-manager/main{,_test}.go, README.md (Stato)
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -177,7 +177,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 0.4 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/probe/*, cmd/mount-manager/main{,_test}.go (+probe subcommand) | G-U0.4 17 PASS -race; review agent-1:opus §7 | unit:0.4:1 (7a99782) |
 | phase-close | P0 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (6 pkgs ok, 55 PASS ≥35), G-BASE pass; P0 review §7 | unit:P0:1 (6368a37) |
 | sub-phase | 1.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/compose/{compose,runner,compose_test}.go | G-U1.1 13 PASS; -race ok; G-FMT ok | unit:1.1:1 (0e371e3) |
-| sub-phase | 1.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/notify/{notify,webhook,webhook_test}.go | G-U1.2 8 PASS -race; G-FMT ok | unit:1.2:1 |
+| sub-phase | 1.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/notify/{notify,webhook,webhook_test}.go | G-U1.2 8 PASS -race; G-FMT ok | unit:1.2:1 (5bd9aea) |
+| sub-phase | 1.3 / 1 | 1 | agent-2:sonnet + agent-1:opus review fix | internal/health/*, cmd/mount-manager/main{,_test}.go (+check), README Stato | G-U1.3 18 health (17 planned + TestEvaluateServicesErrorNotIdle) + TestCheckCommandConfigError PASS; review §7 | unit:1.3:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -218,6 +219,8 @@ none
 | P0: G-FMT, G-UNIT, G-BASE | as §3 | pass | 6 packages ok (cmd, config, mountinfo, probe, unmount, composefile); 55 `--- PASS` ≥35; compose config exit 0 | 7a99782 | 2026-09-24 |
 | G-U1.1 + G-FMT | as §3 | pass | 13 named PASS | 6368a37 + 1.1 diff | 2026-09-24 |
 | G-U1.2 + G-FMT | as §3 | pass | 8 named PASS -race | 0e371e3 + 1.2 diff | 2026-09-24 |
+| G-U1.3 + G-FMT | as §3 | pass | 18 health + 6 cmd PASS | 5bd9aea + 1.3 diff (incl. supervisor fix) | 2026-09-24 |
+| P1: G-FMT, G-UNIT | as §3 | pass | 9 packages ok (+compose, notify, health); 95 `--- PASS` ≥74 | 1.3 closure tree | 2026-09-24 |
 | G-UNIT (later phases), other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
@@ -225,6 +228,7 @@ none
 | Plan readiness checklist | agent-1:opus | rev 1, all plan files | goal/scope, decisions vs user answers, IDs/deps acyclic, seven fields per unit, test oracles, gates, README obligations | READY |
 | 0.4 after-diff review | agent-1:opus | rev 1; base b79fe0b + 0.4 diff (probe.go, main.go probe cmd) | I-3 (Runner never touches path; FS access only in `probe` subprocess), I-7 (manual timer/ctx kill, 2s reap, atomic stuck guard maxStuck=3), JSON contract, exit 3 on missing --path, race clean | pass |
 | P0 phase review | agent-1:opus | rev 1; 7a99782 (dec2c80..7a99782) | integration (CLI dispatch, config/mountinfo/unmount/probe APIs match phase_02/03 consumers), I-2 prerequisites (Entry.FSType/Minor), I-3 (probe subprocess only), I-9 (TestComposeUnchangedFields), tests discovered in all 6 packages, README Stato/Build accurate | pass |
+| 1.3 after-diff review | agent-1:opus | rev 1; base 5bd9aea + 1.3 diff | I-3 (only Deps.Mounts/Probe; no FS access), mandatory order C1→C3→idle→C2→C4→C5, idle semantics (D4). Finding fixed by supervisor: Services() error still ran PS() and could yield Idle=true with docker broken → now PS skipped, docker failure, Idle=false (+TestEvaluateServicesErrorNotIdle). Exec canary now only after successful `ls -A` (no duplicate exec failure). Summary() "idle" priority accepted | pass after fix |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -256,7 +260,7 @@ none
 | 0.4 | phase_01.md | 0.1, 0.3 | DONE | 1 | G-U0.4 PASS -race; supervisor review pass |
 | 1.1 | phase_02.md | P0 | DONE | 1 | G-U1.1 13 PASS |
 | 1.2 | phase_02.md | P0 | DONE | 1 | G-U1.2 8 PASS -race |
-| 1.3 | phase_02.md | 1.1 | TODO | 1 | — |
+| 1.3 | phase_02.md | 1.1 | DONE | 1 | G-U1.3 PASS; supervisor review pass after fix |
 | 2.1 | phase_03.md | P1 | TODO | 1 | — |
 | 2.2 | phase_03.md | 2.1, 1.2 | TODO | 1 | — |
 | 2.3 | phase_03.md | 2.2 | TODO | 1 | — |
@@ -294,8 +298,8 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestProbeCommandOK, TestProbeCommandMissingPath | 0.4 | G-U0.4 | PASS | 2026-09-24 |
 | TestParsePS{NDJSON,Array,Empty,Invalid}, TestServices, TestPSArgs, TestDownArgs, TestUpArgs (I-5), TestKillArgs, TestExecArgs, TestRunErrorIncludesStderr, TestExecRunnerCapturesOutput, TestExecRunnerTimeout (I-7) | 1.1 | G-U1.1 | PASS | 2026-09-24 coordinator rerun |
 | TestWebhook{PostsJSON,Order,Non2xxNotRetried,TimeoutDoesNotBlockNotify,QueueFullDrops}, TestCloseDrains, TestNotifyAfterCloseNoPanic, TestNopNotify | 1.2 | G-U1.2 | PASS | 2026-09-24 coordinator rerun -race |
-| TestEvaluate{AllOK,IdleNoContainers,IdleStaleMount,MountMissingWhileRunning,WrongFSType,ProbeTimeout,ContainerNotRunning,ContainerUnhealthy,ContainerMissing,DockerError,HTTPAccepted,HTTPRejected,HTTPDisabled,ExecEmptyWhileHostHasEntries,ExecCanaryMissing}, TestServicesCached, TestReportSummary | 1.3 | G-U1.3 | TODO | — |
-| TestCheckCommandConfigError | 1.3 | G-U1.3 | TODO | — |
+| TestEvaluate{AllOK,IdleNoContainers,IdleStaleMount,MountMissingWhileRunning,WrongFSType,ProbeTimeout,ContainerNotRunning,ContainerUnhealthy,ContainerMissing,DockerError,HTTPAccepted,HTTPRejected,HTTPDisabled,ExecEmptyWhileHostHasEntries,ExecCanaryMissing}, TestServicesCached, TestReportSummary (+TestEvaluateServicesErrorNotIdle) | 1.3 | G-U1.3 | PASS | 2026-09-24 coordinator rerun |
+| TestCheckCommandConfigError | 1.3 | G-U1.3 | PASS | 2026-09-24 |
 | TestRecover{SequenceHealthyMount,AbortFirst,PostDownStaleCleanup,DownFailsFallsBackToKill,DownAndFallbackFail,UpFails,ContextCanceled} (I-8), TestCleanup{RefusesForeignFSType (I-2),StackedMounts,GivesUpAfterMax,NoMount} | 2.1 | G-U2.1 | TODO | — |
 | TestStartEmitsStartupAndWaiting, TestWaiting{IdleStaysWaiting (I-1),ToMonitoringOnOK,StaleMountCleaned,GraceThenRecovery,GraceResetsWhenIdle}, TestMonitoring{ThresholdTriggersRecovery,IdleGoesWaiting (I-1)}, TestRecoveryAbortFirstFlag, TestVerifying{Success,IgnoresIdle,TimeoutBackoff}, TestRecoverErrorGoesBackoff, TestBackoffSequence, TestRunStopsOnContextCancel (I-7) | 2.2 | G-U2.2 | TODO | — |
 | TestRunCommand{MissingConfig,InvalidConfig,MissingDocker}, TestUsageListsCommands | 2.3 | G-U2.3 | TODO | — |
@@ -308,7 +312,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | Document/sections | Owning unit | Status | Evidence |
 |-------------------|-------------|--------|----------|
 | README.md: Scopo, Stato, Build (skeleton) | 0.1 | DONE | README.md created (P0 re-checks accuracy) |
-| README.md: Stato (check available) | 1.3 | TODO | — |
+| README.md: Stato (check available) | 1.3 | DONE | README Stato mentions `check` |
 | README.md: Test, Stato | 2.4 | TODO | — |
 | README.md: full 9 sections | 3.3 | TODO | — |
 

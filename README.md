@@ -10,7 +10,9 @@ cade o presenta un problema di trasporto, l'applicativo smonta la cartella, riav
 
 ## Stato
 
-In sviluppo — piano `docs/plans/001_plan-MountManager/`.
+In sviluppo — piano `docs/plans/001_plan-MountManager/`. Il comando `check` (suite di controlli
+C1-C5: mount, probe, container, HTTP opzionale, exec opzionale) è disponibile; il resto (supervisione
+continua, recovery) è ancora in sviluppo.
 
 ## Build
 

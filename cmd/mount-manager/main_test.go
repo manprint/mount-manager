@@ -70,3 +70,14 @@ func TestProbeCommandMissingPath(t *testing.T) {
 		t.Fatalf("exit code = %d, want 3", code)
 	}
 }
+
+func TestCheckCommandConfigError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"check", "--config", "/nonexistent/config.yml"}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	if stderr.String() == "" {
+		t.Fatalf("stderr is empty, want a config error")
+	}
+}
