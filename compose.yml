@@ -30,6 +30,13 @@ services:
       options:
         max-size: "10m"
     stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ' /mnt/mount fuse.rclone ' /proc/mounts"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
     command:
       - --config=/config/rclone.conf
       - mount
@@ -67,6 +74,10 @@ services:
     pull_policy: always
     container_name: superdufs
     restart: always
+    depends_on:
+      rclone-mount:
+        condition: service_healthy
+        restart: true
     user: "${DUFS_UID:-1000}:${DUFS_GID:-1000}"
     ports:
       - "5000:5000"

@@ -2,12 +2,11 @@
 
 Read first at every session. Updated 2026-09-24 by agent-1:opus (Claude Opus 5.5, planning session).
 Plan ID: 001_plan-MountManager. Revision: 1. Repo root: /mnt/fabio/dati/Git/SperimentazioniAI/mount-manager.
-Plan baseline: NOT YET CREATED — the directory is not a git repository. Unit 0.1 S1 runs `git init -b main` and creates the
-baseline commit `chore: baseline before plan 001` (files: `.gitignore`, `compose.yml` original, `Specifications.txt`,
-`docs/plans/001_plan-MountManager/`), then records its SHA here. Pre-existing user files: `compose.yml`, `Specifications.txt`
+Plan baseline: `dec2c80` (`chore: baseline before plan 001`, branch main; files: `.gitignore`, `compose.yml` original,
+`Specifications.txt`, `docs/plans/001_plan-MountManager/`), created by unit 0.1 S1 on 2026-09-24. Pre-existing user files: `compose.yml`, `Specifications.txt`
 (authored by the user; preserve). Plan files in `docs/plans/001_plan-MountManager/` were authored for this request (provenance: planning session 2026-09-24).
 Roster: agent-1:opus, agent-2:sonnet, agent-3:haiku. Active execution style: delegated (supported: delegated | handoff).
-State writer: none; ownership: released (planning complete).
+State writer: agent-1:opus (coordinator, execution session 2026-09-24); ownership: held.
 
 ## 0. Resume and completion protocol
 
@@ -96,19 +95,19 @@ Project-specific rules (all sessions):
 
 ## 1. Current unit and scope
 
-- Active scope: none (planning complete; execution not started). Suggested invocation: `/plan-execute-verify-mid execute 001` (plan scope).
-- Scope result: NOT_STARTED
-- Type: none
-- ID / attempt: — / —
-- Status: none
-- Intent: —
-- Assigned: —; supervisor: agent-1:opus
-- File / unit heading: —
+- Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
+- Scope result: RUNNING
+- Type: sub-phase
+- ID / attempt: 0.1 / 1
+- Status: CLOSED (commit reference unit:0.1:1)
+- Intent: baseline git, Go skeleton, compose bootstrap, README skeleton
+- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
+- File / unit heading: phase_01.md §0.1
 - Current step: none
-- Next action: open sub-phase 0.1 (phase_01.md §0.1), step S1 (git init + baseline commit).
-- Next eligible plan unit: 0.1 / phase_01.md
-- Unit base: — (no git yet); branch: main (to be created by 0.1 S1); owned changes: —
-- Repo state: not a git repository; files: `compose.yml`, `Specifications.txt`, `docs/plans/001_plan-MountManager/*`.
+- Next action: open 0.2 (phase_01.md §0.2) S1.
+- Next eligible plan unit: 0.2 / phase_01.md
+- Unit base: dec2c80; branch: main; owned changes: committed
+- Repo state: git main.
 
 ## 2. Feature context and readiness
 
@@ -171,7 +170,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 
 | Type | ID / attempt | Plan revision | Agent | Changes | Evidence/review | Commit |
 |------|--------------|---------------|-------|---------|-----------------|--------|
-| plan | 001 / 1 | 1 | agent-1:opus | docs/plans/001_plan-MountManager/{overview,phase_01..04,STATE}.md | overview.md §Research; §7 cold-read | uncommitted (committed by 0.1 S1 baseline) |
+| plan | 001 / 1 | 1 | agent-1:opus | docs/plans/001_plan-MountManager/{overview,phase_01..04,STATE}.md | overview.md §Research; §7 cold-read | dec2c80 (baseline) |
+| sub-phase | 0.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | .gitignore, compose.yml (+healthcheck, +depends_on), go.mod/sum, cmd/mount-manager/main{,_test}.go, test/composefile/compose_test.go, README.md | G-U0.1 5 PASS, G-BASE ok, G-FMT ok (coordinator rerun) | unit:0.1:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -205,7 +205,8 @@ none
 | Gate/test | Command | Result | Test count/named evidence | Tested revision/diff | When |
 |-----------|---------|--------|--------------------------|---------------------|------|
 | G-BASE | `docker compose -f compose.yml config -q` | pass | exit 0 | original compose.yml (pre-git) | 2026-09-24 planning |
-| G-FMT, G-UNIT, G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
+| G-U0.1 + G-BASE + G-FMT | as §3 | pass | 5 named PASS; compose config exit 0; gofmt/vet clean | base dec2c80 + 0.1 diff | 2026-09-24 |
+| G-UNIT, other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
 |--------|----------|---------------------------------|------------------------------|---------|
@@ -232,7 +233,7 @@ none
 ### Sub-phases
 | ID | Phase file | Depends on | Status | Attempt | Evidence / reason |
 |----|------------|------------|--------|---------|-------------------|
-| 0.1 | phase_01.md | none | TODO | 1 | — |
+| 0.1 | phase_01.md | none | DONE | 1 | baseline dec2c80; G-U0.1 5 PASS; G-BASE ok |
 | 0.2 | phase_01.md | 0.1 | TODO | 1 | — |
 | 0.3 | phase_01.md | 0.1 | TODO | 1 | — |
 | 0.4 | phase_01.md | 0.1, 0.3 | TODO | 1 | — |
@@ -255,7 +256,7 @@ P3 → 3.3 (full, 9 sections). A separate documentation sub-phase exists only in
 ### Phases
 | ID | File | Closure unit | Status | Review / commit reference |
 |----|------|--------------|--------|---------------------------|
-| 0 | phase_01.md | P0 | TODO | — |
+| 0 | phase_01.md | P0 | IN_PROGRESS | — |
 | 1 | phase_02.md | P1 | TODO | — |
 | 2 | phase_03.md | P2 | TODO | — |
 | 3 | phase_04.md | P3 | TODO | — |
@@ -266,8 +267,8 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 ### Tests
 | ID/name | Owning unit | Gate | Status | Evidence |
 |---------|-------------|------|--------|----------|
-| TestVersionCommand, TestUnknownCommand, TestNoArgs | 0.1 | G-U0.1 | TODO | — |
-| TestComposeBootstrap, TestComposeUnchangedFields (I-9) | 0.1 | G-U0.1 | TODO | — |
+| TestVersionCommand, TestUnknownCommand, TestNoArgs | 0.1 | G-U0.1 | PASS | 2026-09-24 coordinator rerun |
+| TestComposeBootstrap, TestComposeUnchangedFields (I-9) | 0.1 | G-U0.1 | PASS | 2026-09-24 coordinator rerun |
 | TestLoadMinimalAppliesDefaults, TestLoadFullOverrides, TestLoadUnknownFieldRejected, TestLoadInvalidDuration, TestLoadEmptyDocument, TestValidateErrors, TestValidateAggregatesErrors | 0.2 | G-U0.2 | TODO | — |
 | TestParseBasic, TestParseEscapedMountPoint, TestParseMalformed, TestTopReturnsLastStacked, TestTopNotFound, TestReadSelf | 0.3 | G-U0.3 | TODO | — |
 | TestAbortConnectionWritesFile, TestAbortConnectionMissingIsNil, TestClassifyDetachError | 0.3 | G-U0.3 | TODO | — |
@@ -289,7 +290,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 ### Documentation
 | Document/sections | Owning unit | Status | Evidence |
 |-------------------|-------------|--------|----------|
-| README.md: Scopo, Stato, Build (skeleton) | 0.1 | TODO | — |
+| README.md: Scopo, Stato, Build (skeleton) | 0.1 | DONE | README.md created (P0 re-checks accuracy) |
 | README.md: Stato (check available) | 1.3 | TODO | — |
 | README.md: Test, Stato | 2.4 | TODO | — |
 | README.md: full 9 sections | 3.3 | TODO | — |
