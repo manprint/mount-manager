@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 1.1 / 1
-- Status: CLOSED (commit reference unit:1.1:1)
-- Intent: package compose (docker CLI client)
+- ID / attempt: 1.2 / 1
+- Status: CLOSED (commit reference unit:1.2:1)
+- Intent: package notify (webhook)
 - Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_02.md §1.1
+- File / unit heading: phase_02.md §1.2
 - Current step: none
-- Next action: open 1.2 (phase_02.md §1.2) S1.
-- Next eligible plan unit: 1.2 / phase_02.md
-- Unit base: 6368a37; branch: main; owned changes: internal/compose/*
+- Next action: open 1.3 (phase_02.md §1.3) S1.
+- Next eligible plan unit: 1.3 / phase_02.md
+- Unit base: 0e371e3; branch: main; owned changes: internal/notify/*
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -176,7 +176,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 0.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/mountinfo/*, internal/unmount/* (linux build tag) | G-U0.3 9 PASS; G-FMT ok | b79fe0b (SHA reference, see §10) |
 | sub-phase | 0.4 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/probe/*, cmd/mount-manager/main{,_test}.go (+probe subcommand) | G-U0.4 17 PASS -race; review agent-1:opus §7 | unit:0.4:1 (7a99782) |
 | phase-close | P0 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (6 pkgs ok, 55 PASS ≥35), G-BASE pass; P0 review §7 | unit:P0:1 (6368a37) |
-| sub-phase | 1.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/compose/{compose,runner,compose_test}.go | G-U1.1 13 PASS; -race ok; G-FMT ok | unit:1.1:1 |
+| sub-phase | 1.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/compose/{compose,runner,compose_test}.go | G-U1.1 13 PASS; -race ok; G-FMT ok | unit:1.1:1 (0e371e3) |
+| sub-phase | 1.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/notify/{notify,webhook,webhook_test}.go | G-U1.2 8 PASS -race; G-FMT ok | unit:1.2:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -216,6 +217,7 @@ none
 | G-U0.4 + G-FMT | as §3 | pass | 12 probe + 5 cmd PASS with -race | b79fe0b + 0.4 diff | 2026-09-24 |
 | P0: G-FMT, G-UNIT, G-BASE | as §3 | pass | 6 packages ok (cmd, config, mountinfo, probe, unmount, composefile); 55 `--- PASS` ≥35; compose config exit 0 | 7a99782 | 2026-09-24 |
 | G-U1.1 + G-FMT | as §3 | pass | 13 named PASS | 6368a37 + 1.1 diff | 2026-09-24 |
+| G-U1.2 + G-FMT | as §3 | pass | 8 named PASS -race | 0e371e3 + 1.2 diff | 2026-09-24 |
 | G-UNIT (later phases), other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
@@ -253,7 +255,7 @@ none
 | 0.3 | phase_01.md | 0.1 | DONE | 1 | G-U0.3 9 PASS |
 | 0.4 | phase_01.md | 0.1, 0.3 | DONE | 1 | G-U0.4 PASS -race; supervisor review pass |
 | 1.1 | phase_02.md | P0 | DONE | 1 | G-U1.1 13 PASS |
-| 1.2 | phase_02.md | P0 | TODO | 1 | — |
+| 1.2 | phase_02.md | P0 | DONE | 1 | G-U1.2 8 PASS -race |
 | 1.3 | phase_02.md | 1.1 | TODO | 1 | — |
 | 2.1 | phase_03.md | P1 | TODO | 1 | — |
 | 2.2 | phase_03.md | 2.1, 1.2 | TODO | 1 | — |
@@ -291,7 +293,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestRunner{OK,Timeout,GarbageOutput,StuckGuard,ContextCanceled} (I-3, I-7) | 0.4 | G-U0.4 | PASS | TestRunnerTimeout 0.30s |
 | TestProbeCommandOK, TestProbeCommandMissingPath | 0.4 | G-U0.4 | PASS | 2026-09-24 |
 | TestParsePS{NDJSON,Array,Empty,Invalid}, TestServices, TestPSArgs, TestDownArgs, TestUpArgs (I-5), TestKillArgs, TestExecArgs, TestRunErrorIncludesStderr, TestExecRunnerCapturesOutput, TestExecRunnerTimeout (I-7) | 1.1 | G-U1.1 | PASS | 2026-09-24 coordinator rerun |
-| TestWebhook{PostsJSON,Order,Non2xxNotRetried,TimeoutDoesNotBlockNotify,QueueFullDrops}, TestCloseDrains, TestNotifyAfterCloseNoPanic, TestNopNotify | 1.2 | G-U1.2 | TODO | — |
+| TestWebhook{PostsJSON,Order,Non2xxNotRetried,TimeoutDoesNotBlockNotify,QueueFullDrops}, TestCloseDrains, TestNotifyAfterCloseNoPanic, TestNopNotify | 1.2 | G-U1.2 | PASS | 2026-09-24 coordinator rerun -race |
 | TestEvaluate{AllOK,IdleNoContainers,IdleStaleMount,MountMissingWhileRunning,WrongFSType,ProbeTimeout,ContainerNotRunning,ContainerUnhealthy,ContainerMissing,DockerError,HTTPAccepted,HTTPRejected,HTTPDisabled,ExecEmptyWhileHostHasEntries,ExecCanaryMissing}, TestServicesCached, TestReportSummary | 1.3 | G-U1.3 | TODO | — |
 | TestCheckCommandConfigError | 1.3 | G-U1.3 | TODO | — |
 | TestRecover{SequenceHealthyMount,AbortFirst,PostDownStaleCleanup,DownFailsFallsBackToKill,DownAndFallbackFail,UpFails,ContextCanceled} (I-8), TestCleanup{RefusesForeignFSType (I-2),StackedMounts,GivesUpAfterMax,NoMount} | 2.1 | G-U2.1 | TODO | — |
