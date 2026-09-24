@@ -6,7 +6,7 @@ Plan baseline: `dec2c80` (`chore: baseline before plan 001`, branch main; files:
 `Specifications.txt`, `docs/plans/001_plan-MountManager/`), created by unit 0.1 S1 on 2026-09-24. Pre-existing user files: `compose.yml`, `Specifications.txt`
 (authored by the user; preserve). Plan files in `docs/plans/001_plan-MountManager/` were authored for this request (provenance: planning session 2026-09-24).
 Roster: agent-1:opus, agent-2:sonnet, agent-3:haiku. Active execution style: delegated (supported: delegated | handoff).
-State writer: none; ownership: released (execution complete 2026-09-24, agent-1:opus).
+State writer: none; ownership: released (audit V001 closed 2026-09-24).
 
 ## 0. Resume and completion protocol
 
@@ -97,16 +97,17 @@ Project-specific rules (all sessions):
 
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: COMPLETE (all 14 sub-phases and P0–P3 DONE; G-FINAL pass; reference scenario covered)
-- Type: phase-close
-- ID / attempt: P3 / 1
-- Status: CLOSED (commit reference unit:P3:1)
-- Intent: final gates and supervisor review
-- Assigned: agent-1:opus
-- File / unit heading: phase_04.md §Phase gates and closure
-- Current step: none
-- Next action: none in plan scope. Out of scope (user decision): real installation (README §7), push.
-- Next eligible plan unit: none
-- Unit base: 24d9e12; branch: main; owned changes: STATE.md only
+- Active audit scope: `/plan-execute-verify-mid verify 001` (2026-09-24) — whole plan 001, range dec2c80..607b16d, tree clean.
+- Type: audit
+- ID / attempt: V001 / 1
+- Status: CLOSED — verdict PASS WITH FINDINGS (0 BLOCKER, 0 MAJOR, 5 MINOR)
+- Intent: evidence-based audit of all DONE units and phases
+- Assigned: agent-1:opus (auditor) + independent read-only reviewer (subagent, fresh context)
+- File / unit heading: docs/plans/001_plan-MountManager/verify/verify_001_2026-09-24.md
+- Current step: none (audit closed)
+- Next action: apply corrections C1, C2 with `/plan-execute-verify-mid execute verify 001` (not auto-applied).
+- Next eligible plan unit: none (implementation scope COMPLETE; last closure P3 unit:P3:1 607b16d)
+- Unit base: 607b16d; branch: main; owned changes: STATE.md, verify/*
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -189,6 +190,7 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 3.2 / 1 | 2 | agent-2:sonnet + agent-1:opus (rev 2 waitStale fix, S4 runs) | e2e-root.sh (0755), test/e2e/harness_test.go (+helpers, waitStale/readDirErr), test/e2e/recovery_test.go | G-FMT-E2E ok; G-E2E-ROOT run 1: 5/6 (E5 precondition) → rev 2 → run 2: 6/6 PASS, no residue; review §7 | unit:3.2:1 (a473fe1) |
 | sub-phase | 3.3 / 1 | 2 | agent-2:sonnet + agent-1:opus (4 accuracy fixes) | README.md (9 sections) | cross-check config/events/exit codes/commands vs code (worker table) + supervisor accuracy review §7 | unit:3.3:1 (24d9e12) |
 | phase-close | P3 / 1 | 2 | agent-1:opus | STATE.md (G-FINAL, final review, scope COMPLETE) | G-FINAL pass; reference scenario 1–7 ↔ E1–E6 PASS; P3 review §7 | unit:P3:1 |
+| audit | V001 / 1 | 2 | agent-1:opus + independent read-only reviewer | verify/verify_001_2026-09-24.md, verify/index.md, STATE.md (§7 row fix) | all gates pass on 607b16d; PASS WITH FINDINGS (5 MINOR); corrections C1, C2 READY | unit:V001:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -241,7 +243,9 @@ none
 | G-E2E-ROOT run 2 | same | pass | 6 `--- PASS:` (E3 10.93s, E4 17.21s, E5 9.03s, E6 14.28s, E1 7.36s, E2 14.80s), final `PASS`; no containers, mounts or work dirs left | b387e76 + 3.2 diff (rev 2) | 2026-09-24 |
 | P3 / G-FINAL: G-FMT, G-FMT-E2E, G-UNIT, G-SYSTEMD, G-E2E-NR, G-BASE | as §3 | pass | 11 packages ok, 126 `--- PASS` ≥105; systemd greps empty; E2E-NR (user) 2 PASS 7.29s/14.80s; compose config ok; no residue | a473fe1 + README (code identical to G-E2E-ROOT run 2) | 2026-09-24 |
 | G-E2E-ROOT (for G-FINAL) | see run 2 above | pass | 6 PASS on code identical to final tree (only README/state changed since) | a473fe1 | 2026-09-24 |
-| (all gates now active; none not-applicable) | | | | | |, G-E2E-* | — | not-applicable-yet | — | — | — |
+| Audit V001: G-BASE, G-FMT, G-FMT-E2E, G-UNIT, G-SYSTEMD, G-E2E-NR, G-E2E-ROOT | as §3 | pass | 11 packages ok, 126 `--- PASS`; systemd greps empty; E2E-NR 2 PASS (7.35s/14.80s); ROOT 6 PASS (E3 10.97s, E4 17.25s, E5 9.02s, E6 14.35s, E1 7.33s, E2 14.86s), exit 0; no residue | 607b16d | 2026-09-24 |
+
+All gates are active; none is not-applicable. (Malformed placeholder row removed by audit V001, finding V001-F5.)
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
 |--------|----------|---------------------------------|------------------------------|---------|
@@ -349,6 +353,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 ### Audits
 | Report | Verdict | Current unresolved findings | Evidence |
 |--------|---------|-----------------------------|----------|
+| [V001](verify/verify_001_2026-09-24.md) | PASS WITH FINDINGS (0 BLOCKER, 0 MAJOR, 5 MINOR) | V001-F1..F5 (MINOR; F5 STATE part fixed) | gates pass on 607b16d; corrections C1, C2 pending (`/plan-execute-verify-mid execute verify 001`) |
 
 Audit finding details/statuses live in verify/index.md; phase progress lives here.
 
