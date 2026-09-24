@@ -1,0 +1,5 @@
+/bin/
+/config/
+/mymount/
+/test/e2e/.work/
+*.test

@@ -1,0 +1,21 @@
+Ho un esigenza che mi devi aiutare a sviluppare.
+Considera il compose.yml, composto da due servizi: rclone e superdufs.
+Ho bisogno di sviluppare un applicativo mount-manager, in grado di gestire il mount di questo stack.
+Scegli tu il linguaggio di programmazione (preferirei rust o go), affinche possa interagire con l'host e con docker.
+Il flusso operativo dell'applicativo deve essere il seguente:
+
+Scenario:
+- Compose spento.
+- Avvio l'applicativo, si mette in attesa/verifica che il mount (configurabile tramite config.yml) sia disponibile e quaìndo lo è inizia a monitorarlo.
+- Avvio il compose, salgono i servizi, ed il mount diviene disponibile, superdufs può accedere ai file del mount. Lo stack è full up. Qui, fai una cosa, aggiungi una dipendenza nel compose per far partire superdufs quando il mount è disponibile, come bootstrap del compose.
+- L'applicativo controlla il mount, ogni X secondi configurabili.
+- Se il mount diviene non accessibile, cade o c'è un problema nel trasporto, l'applicativo:
+  b) smonta la cartella dal sistema (sudo umpount -l)
+  a) effettua compose down/up del compose.yml (puntabile tramite file di configurazione)
+  c) verifica che il mount sia tornato disponibile e controlla che il compose sia attivo e disponibile.
+  d) si rimette in attesa per eventuali problemi
+  
+All'applicazione quindi devono essere passati, tramite configurazione:
+- path del mount sul sistema operativo, creato da rclone docker, per la supervizione
+- path del compose.yml per la supervisione di up/down
+
