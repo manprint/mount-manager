@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 0.3 / 1
-- Status: CLOSED (commit reference unit:0.3:1)
-- Intent: packages mountinfo and unmount
-- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_01.md §0.3
+- ID / attempt: 0.4 / 1
+- Status: CLOSED (commit reference unit:0.4:1)
+- Intent: package probe and `probe` subcommand
+- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus (review after diff)
+- File / unit heading: phase_01.md §0.4
 - Current step: none
-- Next action: open 0.4 (phase_01.md §0.4) S1.
-- Next eligible plan unit: 0.4 / phase_01.md
-- Unit base: c598fa0; branch: main; owned changes: internal/mountinfo/*, internal/unmount/*
+- Next action: open P0 (phase gates G-FMT, G-UNIT, G-BASE + supervisor review).
+- Next eligible plan unit: P0 / phase_01.md
+- Unit base: b79fe0b; branch: main; owned changes: internal/probe/*, cmd/mount-manager/main{,_test}.go
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -173,7 +173,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | plan | 001 / 1 | 1 | agent-1:opus | docs/plans/001_plan-MountManager/{overview,phase_01..04,STATE}.md | overview.md §Research; §7 cold-read | dec2c80 (baseline) |
 | sub-phase | 0.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | .gitignore, compose.yml (+healthcheck, +depends_on), go.mod/sum, cmd/mount-manager/main{,_test}.go, test/composefile/compose_test.go, README.md | G-U0.1 5 PASS, G-BASE ok, G-FMT ok (coordinator rerun) | unit:0.1:1 (6e5ff4a) |
 | sub-phase | 0.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/config/config{,_test}.go | G-U0.2 7 PASS (15 subtests in TestValidateErrors); G-FMT ok | unit:0.2:1 (c598fa0) |
-| sub-phase | 0.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/mountinfo/*, internal/unmount/* (linux build tag) | G-U0.3 9 PASS; G-FMT ok | unit:0.3:1 |
+| sub-phase | 0.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/mountinfo/*, internal/unmount/* (linux build tag) | G-U0.3 9 PASS; G-FMT ok | b79fe0b (SHA reference, see §10) |
+| sub-phase | 0.4 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/probe/*, cmd/mount-manager/main{,_test}.go (+probe subcommand) | G-U0.4 17 PASS -race; review agent-1:opus §7 | unit:0.4:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -210,11 +211,13 @@ none
 | G-U0.1 + G-BASE + G-FMT | as §3 | pass | 5 named PASS; compose config exit 0; gofmt/vet clean | base dec2c80 + 0.1 diff | 2026-09-24 |
 | G-U0.2 + G-FMT | as §3 | pass | 7 named PASS | 6e5ff4a + 0.2 diff | 2026-09-24 |
 | G-U0.3 + G-FMT | as §3 | pass | 9 named PASS | c598fa0 + 0.3 diff | 2026-09-24 |
+| G-U0.4 + G-FMT | as §3 | pass | 12 probe + 5 cmd PASS with -race | b79fe0b + 0.4 diff | 2026-09-24 |
 | G-UNIT, other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
 |--------|----------|---------------------------------|------------------------------|---------|
 | Plan readiness checklist | agent-1:opus | rev 1, all plan files | goal/scope, decisions vs user answers, IDs/deps acyclic, seven fields per unit, test oracles, gates, README obligations | READY |
+| 0.4 after-diff review | agent-1:opus | rev 1; base b79fe0b + 0.4 diff (probe.go, main.go probe cmd) | I-3 (Runner never touches path; FS access only in `probe` subprocess), I-7 (manual timer/ctx kill, 2s reap, atomic stuck guard maxStuck=3), JSON contract, exit 3 on missing --path, race clean | pass |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -231,6 +234,9 @@ none
 
 - Probing rclone in a container without `--allow-non-empty` fails ("directory already mounted") when `/mnt/mount` is a bind mount (R2).
 - Plain `sudo -n <cmd>` for paths outside the repo root (or in subdirectories) asks for a password (R6).
+- Commit trailers: PEV-* lines and the `Co-Authored-By` attribution must be ONE paragraph (no blank line between),
+  otherwise git parses only the last paragraph as trailers. Commits 6e5ff4a (0.1), c598fa0 (0.2), b79fe0b (0.3) have
+  PEV lines in the body, not the trailer block; they are resolved by the explicit SHA references in §4 (history not rewritten).
 
 ## 11. Progress board
 
@@ -240,7 +246,7 @@ none
 | 0.1 | phase_01.md | none | DONE | 1 | baseline dec2c80; G-U0.1 5 PASS; G-BASE ok |
 | 0.2 | phase_01.md | 0.1 | DONE | 1 | G-U0.2 7 PASS |
 | 0.3 | phase_01.md | 0.1 | DONE | 1 | G-U0.3 9 PASS |
-| 0.4 | phase_01.md | 0.1, 0.3 | TODO | 1 | — |
+| 0.4 | phase_01.md | 0.1, 0.3 | DONE | 1 | G-U0.4 PASS -race; supervisor review pass |
 | 1.1 | phase_02.md | P0 | TODO | 1 | — |
 | 1.2 | phase_02.md | P0 | TODO | 1 | — |
 | 1.3 | phase_02.md | 1.1 | TODO | 1 | — |
@@ -276,9 +282,9 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestLoadMinimalAppliesDefaults, TestLoadFullOverrides, TestLoadUnknownFieldRejected, TestLoadInvalidDuration, TestLoadEmptyDocument, TestValidateErrors, TestValidateAggregatesErrors | 0.2 | G-U0.2 | PASS | 2026-09-24 coordinator rerun |
 | TestParseBasic, TestParseEscapedMountPoint, TestParseMalformed, TestTopReturnsLastStacked, TestTopNotFound, TestReadSelf | 0.3 | G-U0.3 | PASS | 2026-09-24 coordinator rerun |
 | TestAbortConnectionWritesFile, TestAbortConnectionMissingIsNil, TestClassifyDetachError | 0.3 | G-U0.3 | PASS | 2026-09-24 coordinator rerun |
-| TestLocal{EmptyDir,WithEntries,CanaryPresent,CanaryMissing,NotDir,MissingPath}, TestHelperProcess | 0.4 | G-U0.4 | TODO | — |
-| TestRunner{OK,Timeout,GarbageOutput,StuckGuard,ContextCanceled} (I-3, I-7) | 0.4 | G-U0.4 | TODO | — |
-| TestProbeCommandOK, TestProbeCommandMissingPath | 0.4 | G-U0.4 | TODO | — |
+| TestLocal{EmptyDir,WithEntries,CanaryPresent,CanaryMissing,NotDir,MissingPath}, TestHelperProcess | 0.4 | G-U0.4 | PASS | 2026-09-24 coordinator rerun -race |
+| TestRunner{OK,Timeout,GarbageOutput,StuckGuard,ContextCanceled} (I-3, I-7) | 0.4 | G-U0.4 | PASS | TestRunnerTimeout 0.30s |
+| TestProbeCommandOK, TestProbeCommandMissingPath | 0.4 | G-U0.4 | PASS | 2026-09-24 |
 | TestParsePS{NDJSON,Array,Empty,Invalid}, TestServices, TestPSArgs, TestDownArgs, TestUpArgs (I-5), TestKillArgs, TestExecArgs, TestRunErrorIncludesStderr, TestExecRunnerCapturesOutput, TestExecRunnerTimeout (I-7) | 1.1 | G-U1.1 | TODO | — |
 | TestWebhook{PostsJSON,Order,Non2xxNotRetried,TimeoutDoesNotBlockNotify,QueueFullDrops}, TestCloseDrains, TestNotifyAfterCloseNoPanic, TestNopNotify | 1.2 | G-U1.2 | TODO | — |
 | TestEvaluate{AllOK,IdleNoContainers,IdleStaleMount,MountMissingWhileRunning,WrongFSType,ProbeTimeout,ContainerNotRunning,ContainerUnhealthy,ContainerMissing,DockerError,HTTPAccepted,HTTPRejected,HTTPDisabled,ExecEmptyWhileHostHasEntries,ExecCanaryMissing}, TestServicesCached, TestReportSummary | 1.3 | G-U1.3 | TODO | — |

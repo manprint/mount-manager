@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,6 +34,38 @@ func TestUnknownCommand(t *testing.T) {
 func TestNoArgs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(nil, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+}
+
+func TestProbeCommandOK(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"probe", "--path", dir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr = %q", code, stderr.String())
+	}
+
+	var res struct {
+		OK         bool `json:"ok"`
+		HasEntries bool `json:"has_entries"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
+		t.Fatalf("decode stdout %q: %s", stdout.String(), err)
+	}
+	if !res.OK || !res.HasEntries {
+		t.Fatalf("res = %+v, want OK && HasEntries", res)
+	}
+}
+
+func TestProbeCommandMissingPath(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"probe"}, &stdout, &stderr)
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3", code)
 	}
