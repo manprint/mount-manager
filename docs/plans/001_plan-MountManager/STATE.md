@@ -97,16 +97,16 @@ Project-specific rules (all sessions):
 
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
-- Type: phase-close
-- ID / attempt: P2 / 1
-- Status: CLOSED (commit reference unit:P2:1)
-- Intent: phase 2 gates and supervisor review
-- Assigned: agent-1:opus
-- File / unit heading: phase_03.md §Phase gates and closure
+- Type: sub-phase
+- ID / attempt: 3.1 / 1
+- Status: CLOSED (commit reference unit:3.1:1)
+- Intent: systemd unit and example config
+- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
+- File / unit heading: phase_04.md §3.1
 - Current step: none
-- Next action: open 3.1 (phase_04.md §3.1) S1.
-- Next eligible plan unit: 3.1 / phase_04.md
-- Unit base: a0b8e15; branch: main; owned changes: STATE.md only
+- Next action: open 3.2 (phase_04.md §3.2) S1.
+- Next eligible plan unit: 3.2 / phase_04.md
+- Unit base: fd9ed3c; branch: main; owned changes: deploy/*, internal/config/config_test.go
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -184,7 +184,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 2.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/supervisor/supervisor{,_test}.go | G-U2.2 15 PASS -race ×3; review §7 | unit:2.2:1 (d78ee88) |
 | sub-phase | 2.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | cmd/mount-manager/main{,_test}.go (+run, shared buildDeps(cfg)) | G-U2.3 10 cmd PASS; -race ./... ok | unit:2.3:1 (8ec306d) |
 | sub-phase | 2.4 / 1 | 1 | agent-2:sonnet + agent-1:opus (preflight fix, S4 run, README Stato) | test/e2e/{harness,scenarios}_test.go, README Test+Stato | G-FMT-E2E ok; G-E2E-NR 2 PASS (22s), no residue; review §7 | unit:2.4:1 (a0b8e15) |
-| phase-close | P2 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-FMT-E2E, G-UNIT (125 PASS ≥104), G-E2E-NR pass; P2 review §7 | unit:P2:1 |
+| phase-close | P2 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-FMT-E2E, G-UNIT (125 PASS ≥104), G-E2E-NR pass; P2 review §7 | unit:P2:1 (fd9ed3c) |
+| sub-phase | 3.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus: 3 comment fixes) | deploy/mount-manager.service, deploy/config.example.yml, internal/config/config_test.go | G-U3.1 1 PASS; G-SYSTEMD pass (no diagnostics, no forbidden directive) | unit:3.1:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -232,7 +233,8 @@ none
 | G-U2.3 + G-FMT | as §3 | pass | 4 new + 6 previous cmd PASS | d78ee88 + 2.3 diff | 2026-09-24 |
 | G-FMT-E2E + G-E2E-NR (2.4 S4) | as §3 | pass | `--- PASS: TestE2E_WaitThenMonitor` (7.31s), `--- PASS: TestE2E_ManualDownNoRecovery` (14.81s), `ok`; no containers/mounts/work dirs left | 8ec306d + 2.4 diff | 2026-09-24 |
 | P2: G-FMT, G-FMT-E2E, G-UNIT (+ G-E2E-NR above, code unchanged since) | as §3 | pass | 11 packages ok (+recovery, supervisor); 125 `--- PASS` ≥104 | 2.4 closure tree | 2026-09-24 |
-| G-UNIT (later phases), other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
+| G-U3.1 + G-SYSTEMD + G-FMT | as §3 | pass | TestExampleConfigLoads PASS; systemd-analyze verify: no line mentions mount-manager.service; forbidden grep empty | fd9ed3c + 3.1 diff | 2026-09-24 |
+| G-UNIT (later phases), other G-U*, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
 |--------|----------|---------------------------------|------------------------------|---------|
@@ -282,7 +284,7 @@ none
 | 2.2 | phase_03.md | 2.1, 1.2 | DONE | 1 | G-U2.2 15 PASS -race; supervisor review pass |
 | 2.3 | phase_03.md | 2.2 | DONE | 1 | G-U2.3 PASS |
 | 2.4 | phase_03.md | 2.3 | DONE | 1 | G-E2E-NR 2 PASS; supervisor review pass |
-| 3.1 | phase_04.md | P2 | TODO | 1 | — |
+| 3.1 | phase_04.md | P2 | DONE | 1 | G-U3.1, G-SYSTEMD pass |
 | 3.2 | phase_04.md | P2 | TODO | 1 | — |
 | 3.3 | phase_04.md | 3.1, 3.2 | TODO | 1 | — |
 
@@ -297,7 +299,7 @@ P3 → 3.3 (full, 9 sections). A separate documentation sub-phase exists only in
 | 0 | phase_01.md | P0 | DONE | P0 review pass (§7); unit:P0:1 |
 | 1 | phase_02.md | P1 | DONE | P1 review pass (§7); unit:P1:1 |
 | 2 | phase_03.md | P2 | DONE | P2 review pass (§7); unit:P2:1 |
-| 3 | phase_04.md | P3 | TODO | — |
+| 3 | phase_04.md | P3 | IN_PROGRESS | — |
 
 Statuses: TODO, IN_PROGRESS, IN_REVIEW, DONE, SKIPPED, BLOCKED.
 SKIPPED retains a reason and does not automatically satisfy dependent units.
@@ -321,8 +323,8 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestStartEmitsStartupAndWaiting, TestWaiting{IdleStaysWaiting (I-1),ToMonitoringOnOK,StaleMountCleaned,GraceThenRecovery,GraceResetsWhenIdle}, TestMonitoring{ThresholdTriggersRecovery,IdleGoesWaiting (I-1)}, TestRecoveryAbortFirstFlag, TestVerifying{Success,IgnoresIdle,TimeoutBackoff}, TestRecoverErrorGoesBackoff, TestBackoffSequence, TestRunStopsOnContextCancel (I-7) | 2.2 | G-U2.2 | PASS | 2026-09-24 coordinator rerun -race |
 | TestRunCommand{MissingConfig,InvalidConfig,MissingDocker}, TestUsageListsCommands | 2.3 | G-U2.3 | PASS | 2026-09-24 coordinator rerun |
 | TestE2E_WaitThenMonitor (E1), TestE2E_ManualDownNoRecovery (E2, I-1) | 2.4 | G-E2E-NR, G-E2E-ROOT | PASS (G-E2E-NR as user; ROOT pending 3.2) | 2026-09-24: 7.31s, 14.81s |
-| TestExampleConfigLoads | 3.1 | G-U3.1 | TODO | — |
-| G-SYSTEMD static check (I-4) | 3.1 | G-SYSTEMD | TODO | — |
+| TestExampleConfigLoads | 3.1 | G-U3.1 | PASS | 2026-09-24 coordinator rerun |
+| G-SYSTEMD static check (I-4) | 3.1 | G-SYSTEMD | PASS | both greps empty |
 | TestE2E_KillRcloneRecovers (E3), TestE2E_PausedRcloneRecovers (E4, I-3/I-7), TestE2E_StaleMountCleanedWhenIdle (E5), TestE2E_PartialStackAfterBootRecovers (E6) | 3.2 | G-E2E-ROOT | TODO | — |
 
 ### Documentation

@@ -342,6 +342,31 @@ func TestValidateErrors(t *testing.T) {
 	}
 }
 
+func TestExampleConfigLoads(t *testing.T) {
+	raw, err := os.ReadFile("../../deploy/config.example.yml")
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+
+	dir, composeFile := setupComposeFile(t)
+
+	src := string(raw)
+	src = strings.ReplaceAll(src, "/opt/rclone-stack/compose.yml", composeFile)
+	src = strings.ReplaceAll(src, "/opt/rclone-stack", dir)
+
+	cfg, err := LoadBytes([]byte(src))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+
+	if cfg.Checks.HTTP.URL != "http://127.0.0.1:5000/" {
+		t.Errorf("Checks.HTTP.URL = %q", cfg.Checks.HTTP.URL)
+	}
+	if cfg.Checks.Exec.Service != "superdufs" {
+		t.Errorf("Checks.Exec.Service = %q", cfg.Checks.Exec.Service)
+	}
+}
+
 func TestValidateAggregatesErrors(t *testing.T) {
 	cfg := validConfig(t)
 	cfg.MountPath = "mnt/mount"

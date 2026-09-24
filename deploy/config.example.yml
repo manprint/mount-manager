@@ -1,0 +1,37 @@
+# Example mount-manager configuration with explicit defaults for every key.
+# Install at /etc/mount-manager/config.yml and adjust paths for your host.
+
+mount_path: /opt/rclone-stack/mymount # absolute path of the rclone FUSE mount point to supervise
+compose_file: /opt/rclone-stack/compose.yml # absolute path to the docker compose file for the stack
+project_directory: "" # compose project directory; empty defaults to the compose file's directory
+docker_binary: docker # name or path of the docker binary used to drive the compose stack
+expected_fstype: fuse.rclone # filesystem type expected at mount_path when healthy
+check_interval: 10s # interval between health checks while the stack is running
+check_timeout: 10s # timeout for a single health check probe
+failure_threshold: 3 # consecutive failed checks before recovery is triggered
+startup_grace: 120s # while waiting, how long a running but unhealthy stack is tolerated before recovery
+log_level: info # log verbosity: debug, info, warn or error
+
+recovery:
+  down_timeout: 30s # max time allowed to bring the compose stack down during recovery
+  up_wait_timeout: 120s # max time to wait for the compose stack to come back up
+  verify_timeout: 120s # max time to wait for the mount to verify healthy after recovery
+  command_grace: 60s # extra time added to the down/up/kill command timeouts before they are terminated
+  backoff_initial: 10s # initial backoff delay between recovery attempts
+  backoff_max: 5m # maximum backoff delay between recovery attempts
+
+checks:
+  canary: "" # optional relative file name inside the mount that must exist to pass the check
+  http:
+    url: "http://127.0.0.1:5000/" # URL polled for the HTTP health check; empty disables it
+    timeout: 5s # timeout for the HTTP health check request
+    accept_status: [200, 401, 403] # HTTP status codes considered healthy
+  exec:
+    service: superdufs # compose service name to exec into for the exec health check; empty disables it
+    path: /data # absolute path inside the exec service container to check for entries
+    timeout: 10s # timeout for the exec health check command
+
+webhook:
+  url: "" # URL receiving JSON event notifications; empty disables the webhook
+  headers: {} # extra HTTP headers sent with each webhook request
+  timeout: 5s # timeout for the webhook HTTP request

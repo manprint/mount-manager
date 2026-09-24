@@ -1,0 +1,17 @@
+[Unit]
+Description=mount-manager supervisor for the rclone + superdufs compose stack
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mount-manager run --config /etc/mount-manager/config.yml
+Restart=always
+RestartSec=5
+TimeoutStopSec=90
+KillSignal=SIGTERM
+# Must run in the host mount namespace: do not add PrivateTmp=, ProtectSystem=, ProtectHome=,
+# PrivateMounts= or any other filesystem namespacing option (unmounts would not reach the host).
+
+[Install]
+WantedBy=multi-user.target
