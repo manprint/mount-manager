@@ -97,16 +97,16 @@ Project-specific rules (all sessions):
 
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
-- Type: sub-phase
-- ID / attempt: 0.4 / 1
-- Status: CLOSED (commit reference unit:0.4:1)
-- Intent: package probe and `probe` subcommand
-- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus (review after diff)
-- File / unit heading: phase_01.md §0.4
+- Type: phase-close
+- ID / attempt: P0 / 1
+- Status: CLOSED (commit reference unit:P0:1)
+- Intent: phase 0 gates and supervisor review
+- Assigned: agent-1:opus
+- File / unit heading: phase_01.md §Phase gates and closure
 - Current step: none
-- Next action: open P0 (phase gates G-FMT, G-UNIT, G-BASE + supervisor review).
-- Next eligible plan unit: P0 / phase_01.md
-- Unit base: b79fe0b; branch: main; owned changes: internal/probe/*, cmd/mount-manager/main{,_test}.go
+- Next action: open 1.1 (phase_02.md §1.1) S1.
+- Next eligible plan unit: 1.1 / phase_02.md
+- Unit base: 7a99782; branch: main; owned changes: STATE.md only
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -174,7 +174,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 0.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | .gitignore, compose.yml (+healthcheck, +depends_on), go.mod/sum, cmd/mount-manager/main{,_test}.go, test/composefile/compose_test.go, README.md | G-U0.1 5 PASS, G-BASE ok, G-FMT ok (coordinator rerun) | unit:0.1:1 (6e5ff4a) |
 | sub-phase | 0.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/config/config{,_test}.go | G-U0.2 7 PASS (15 subtests in TestValidateErrors); G-FMT ok | unit:0.2:1 (c598fa0) |
 | sub-phase | 0.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/mountinfo/*, internal/unmount/* (linux build tag) | G-U0.3 9 PASS; G-FMT ok | b79fe0b (SHA reference, see §10) |
-| sub-phase | 0.4 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/probe/*, cmd/mount-manager/main{,_test}.go (+probe subcommand) | G-U0.4 17 PASS -race; review agent-1:opus §7 | unit:0.4:1 |
+| sub-phase | 0.4 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/probe/*, cmd/mount-manager/main{,_test}.go (+probe subcommand) | G-U0.4 17 PASS -race; review agent-1:opus §7 | unit:0.4:1 (7a99782) |
+| phase-close | P0 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (6 pkgs ok, 55 PASS ≥35), G-BASE pass; P0 review §7 | unit:P0:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -212,12 +213,14 @@ none
 | G-U0.2 + G-FMT | as §3 | pass | 7 named PASS | 6e5ff4a + 0.2 diff | 2026-09-24 |
 | G-U0.3 + G-FMT | as §3 | pass | 9 named PASS | c598fa0 + 0.3 diff | 2026-09-24 |
 | G-U0.4 + G-FMT | as §3 | pass | 12 probe + 5 cmd PASS with -race | b79fe0b + 0.4 diff | 2026-09-24 |
-| G-UNIT, other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
+| P0: G-FMT, G-UNIT, G-BASE | as §3 | pass | 6 packages ok (cmd, config, mountinfo, probe, unmount, composefile); 55 `--- PASS` ≥35; compose config exit 0 | 7a99782 | 2026-09-24 |
+| G-UNIT (later phases), other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
 |--------|----------|---------------------------------|------------------------------|---------|
 | Plan readiness checklist | agent-1:opus | rev 1, all plan files | goal/scope, decisions vs user answers, IDs/deps acyclic, seven fields per unit, test oracles, gates, README obligations | READY |
 | 0.4 after-diff review | agent-1:opus | rev 1; base b79fe0b + 0.4 diff (probe.go, main.go probe cmd) | I-3 (Runner never touches path; FS access only in `probe` subprocess), I-7 (manual timer/ctx kill, 2s reap, atomic stuck guard maxStuck=3), JSON contract, exit 3 on missing --path, race clean | pass |
+| P0 phase review | agent-1:opus | rev 1; 7a99782 (dec2c80..7a99782) | integration (CLI dispatch, config/mountinfo/unmount/probe APIs match phase_02/03 consumers), I-2 prerequisites (Entry.FSType/Minor), I-3 (probe subprocess only), I-9 (TestComposeUnchangedFields), tests discovered in all 6 packages, README Stato/Build accurate | pass |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -266,7 +269,7 @@ P3 → 3.3 (full, 9 sections). A separate documentation sub-phase exists only in
 ### Phases
 | ID | File | Closure unit | Status | Review / commit reference |
 |----|------|--------------|--------|---------------------------|
-| 0 | phase_01.md | P0 | IN_PROGRESS | — |
+| 0 | phase_01.md | P0 | DONE | P0 review pass (§7); unit:P0:1 |
 | 1 | phase_02.md | P1 | TODO | — |
 | 2 | phase_03.md | P2 | TODO | — |
 | 3 | phase_04.md | P3 | TODO | — |
