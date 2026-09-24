@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 0.1 / 1
-- Status: CLOSED (commit reference unit:0.1:1)
-- Intent: baseline git, Go skeleton, compose bootstrap, README skeleton
+- ID / attempt: 0.2 / 1
+- Status: CLOSED (commit reference unit:0.2:1)
+- Intent: package config
 - Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_01.md §0.1
+- File / unit heading: phase_01.md §0.2
 - Current step: none
-- Next action: open 0.2 (phase_01.md §0.2) S1.
-- Next eligible plan unit: 0.2 / phase_01.md
-- Unit base: dec2c80; branch: main; owned changes: committed
+- Next action: open 0.3 (phase_01.md §0.3) S1.
+- Next eligible plan unit: 0.3 / phase_01.md
+- Unit base: 6e5ff4a; branch: main; owned changes: committed
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -171,7 +171,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | Type | ID / attempt | Plan revision | Agent | Changes | Evidence/review | Commit |
 |------|--------------|---------------|-------|---------|-----------------|--------|
 | plan | 001 / 1 | 1 | agent-1:opus | docs/plans/001_plan-MountManager/{overview,phase_01..04,STATE}.md | overview.md §Research; §7 cold-read | dec2c80 (baseline) |
-| sub-phase | 0.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | .gitignore, compose.yml (+healthcheck, +depends_on), go.mod/sum, cmd/mount-manager/main{,_test}.go, test/composefile/compose_test.go, README.md | G-U0.1 5 PASS, G-BASE ok, G-FMT ok (coordinator rerun) | unit:0.1:1 |
+| sub-phase | 0.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | .gitignore, compose.yml (+healthcheck, +depends_on), go.mod/sum, cmd/mount-manager/main{,_test}.go, test/composefile/compose_test.go, README.md | G-U0.1 5 PASS, G-BASE ok, G-FMT ok (coordinator rerun) | unit:0.1:1 (6e5ff4a) |
+| sub-phase | 0.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/config/config{,_test}.go | G-U0.2 7 PASS (15 subtests in TestValidateErrors); G-FMT ok | unit:0.2:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -206,6 +207,7 @@ none
 |-----------|---------|--------|--------------------------|---------------------|------|
 | G-BASE | `docker compose -f compose.yml config -q` | pass | exit 0 | original compose.yml (pre-git) | 2026-09-24 planning |
 | G-U0.1 + G-BASE + G-FMT | as §3 | pass | 5 named PASS; compose config exit 0; gofmt/vet clean | base dec2c80 + 0.1 diff | 2026-09-24 |
+| G-U0.2 + G-FMT | as §3 | pass | 7 named PASS | 6e5ff4a + 0.2 diff | 2026-09-24 |
 | G-UNIT, other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
@@ -234,7 +236,7 @@ none
 | ID | Phase file | Depends on | Status | Attempt | Evidence / reason |
 |----|------------|------------|--------|---------|-------------------|
 | 0.1 | phase_01.md | none | DONE | 1 | baseline dec2c80; G-U0.1 5 PASS; G-BASE ok |
-| 0.2 | phase_01.md | 0.1 | TODO | 1 | — |
+| 0.2 | phase_01.md | 0.1 | DONE | 1 | G-U0.2 7 PASS |
 | 0.3 | phase_01.md | 0.1 | TODO | 1 | — |
 | 0.4 | phase_01.md | 0.1, 0.3 | TODO | 1 | — |
 | 1.1 | phase_02.md | P0 | TODO | 1 | — |
@@ -269,7 +271,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 |---------|-------------|------|--------|----------|
 | TestVersionCommand, TestUnknownCommand, TestNoArgs | 0.1 | G-U0.1 | PASS | 2026-09-24 coordinator rerun |
 | TestComposeBootstrap, TestComposeUnchangedFields (I-9) | 0.1 | G-U0.1 | PASS | 2026-09-24 coordinator rerun |
-| TestLoadMinimalAppliesDefaults, TestLoadFullOverrides, TestLoadUnknownFieldRejected, TestLoadInvalidDuration, TestLoadEmptyDocument, TestValidateErrors, TestValidateAggregatesErrors | 0.2 | G-U0.2 | TODO | — |
+| TestLoadMinimalAppliesDefaults, TestLoadFullOverrides, TestLoadUnknownFieldRejected, TestLoadInvalidDuration, TestLoadEmptyDocument, TestValidateErrors, TestValidateAggregatesErrors | 0.2 | G-U0.2 | PASS | 2026-09-24 coordinator rerun |
 | TestParseBasic, TestParseEscapedMountPoint, TestParseMalformed, TestTopReturnsLastStacked, TestTopNotFound, TestReadSelf | 0.3 | G-U0.3 | TODO | — |
 | TestAbortConnectionWritesFile, TestAbortConnectionMissingIsNil, TestClassifyDetachError | 0.3 | G-U0.3 | TODO | — |
 | TestLocal{EmptyDir,WithEntries,CanaryPresent,CanaryMissing,NotDir,MissingPath}, TestHelperProcess | 0.4 | G-U0.4 | TODO | — |
