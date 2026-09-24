@@ -6,7 +6,7 @@ Plan baseline: `dec2c80` (`chore: baseline before plan 001`, branch main; files:
 `Specifications.txt`, `docs/plans/001_plan-MountManager/`), created by unit 0.1 S1 on 2026-09-24. Pre-existing user files: `compose.yml`, `Specifications.txt`
 (authored by the user; preserve). Plan files in `docs/plans/001_plan-MountManager/` were authored for this request (provenance: planning session 2026-09-24).
 Roster: agent-1:opus, agent-2:sonnet, agent-3:haiku. Active execution style: delegated (supported: delegated | handoff).
-State writer: agent-1:opus (coordinator, execution session 2026-09-24); ownership: held.
+State writer: none; ownership: released (execution complete 2026-09-24, agent-1:opus).
 
 ## 0. Resume and completion protocol
 
@@ -96,17 +96,17 @@ Project-specific rules (all sessions):
 ## 1. Current unit and scope
 
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
-- Scope result: RUNNING
-- Type: sub-phase
-- ID / attempt: 3.3 / 1
-- Status: CLOSED (commit reference unit:3.3:1)
-- Intent: full Italian README
-- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_04.md §3.3
+- Scope result: COMPLETE (all 14 sub-phases and P0–P3 DONE; G-FINAL pass; reference scenario covered)
+- Type: phase-close
+- ID / attempt: P3 / 1
+- Status: CLOSED (commit reference unit:P3:1)
+- Intent: final gates and supervisor review
+- Assigned: agent-1:opus
+- File / unit heading: phase_04.md §Phase gates and closure
 - Current step: none
-- Next action: commit P3 closure (G-FINAL + review recorded in §7).
-- Next eligible plan unit: P3 / phase_04.md
-- Unit base: a473fe1; branch: main; owned changes: README.md
+- Next action: none in plan scope. Out of scope (user decision): real installation (README §7), push.
+- Next eligible plan unit: none
+- Unit base: 24d9e12; branch: main; owned changes: STATE.md only
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -187,7 +187,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | phase-close | P2 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-FMT-E2E, G-UNIT (125 PASS ≥104), G-E2E-NR pass; P2 review §7 | unit:P2:1 (fd9ed3c) |
 | sub-phase | 3.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus: 3 comment fixes) | deploy/mount-manager.service, deploy/config.example.yml, internal/config/config_test.go | G-U3.1 1 PASS; G-SYSTEMD pass (no diagnostics, no forbidden directive) | unit:3.1:1 (b387e76) |
 | sub-phase | 3.2 / 1 | 2 | agent-2:sonnet + agent-1:opus (rev 2 waitStale fix, S4 runs) | e2e-root.sh (0755), test/e2e/harness_test.go (+helpers, waitStale/readDirErr), test/e2e/recovery_test.go | G-FMT-E2E ok; G-E2E-ROOT run 1: 5/6 (E5 precondition) → rev 2 → run 2: 6/6 PASS, no residue; review §7 | unit:3.2:1 (a473fe1) |
-| sub-phase | 3.3 / 1 | 2 | agent-2:sonnet + agent-1:opus (4 accuracy fixes) | README.md (9 sections) | cross-check config/events/exit codes/commands vs code (worker table) + supervisor accuracy review §7 | unit:3.3:1 |
+| sub-phase | 3.3 / 1 | 2 | agent-2:sonnet + agent-1:opus (4 accuracy fixes) | README.md (9 sections) | cross-check config/events/exit codes/commands vs code (worker table) + supervisor accuracy review §7 | unit:3.3:1 (24d9e12) |
+| phase-close | P3 / 1 | 2 | agent-1:opus | STATE.md (G-FINAL, final review, scope COMPLETE) | G-FINAL pass; reference scenario 1–7 ↔ E1–E6 PASS; P3 review §7 | unit:P3:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -309,7 +310,7 @@ P3 → 3.3 (full, 9 sections). A separate documentation sub-phase exists only in
 | 0 | phase_01.md | P0 | DONE | P0 review pass (§7); unit:P0:1 |
 | 1 | phase_02.md | P1 | DONE | P1 review pass (§7); unit:P1:1 |
 | 2 | phase_03.md | P2 | DONE | P2 review pass (§7); unit:P2:1 |
-| 3 | phase_04.md | P3 | IN_PROGRESS | — |
+| 3 | phase_04.md | P3 | DONE | P3 final review pass (§7); unit:P3:1 |
 
 Statuses: TODO, IN_PROGRESS, IN_REVIEW, DONE, SKIPPED, BLOCKED.
 SKIPPED retains a reason and does not automatically satisfy dependent units.
