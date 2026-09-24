@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 2.2 / 1
-- Status: CLOSED (commit reference unit:2.2:1)
-- Intent: package supervisor (state machine)
+- ID / attempt: 2.3 / 1
+- Status: CLOSED (commit reference unit:2.3:1)
+- Intent: `run` command wiring
 - Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_03.md §2.2
+- File / unit heading: phase_03.md §2.3
 - Current step: none
-- Next action: open 2.3 (phase_03.md §2.3) S1.
-- Next eligible plan unit: 2.3 / phase_03.md
-- Unit base: 95ce70b; branch: main; owned changes: committed
+- Next action: open 2.4 (phase_03.md §2.4) S1.
+- Next eligible plan unit: 2.4 / phase_03.md
+- Unit base: d78ee88; branch: main; owned changes: cmd/mount-manager/main{,_test}.go
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -181,7 +181,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 1.3 / 1 | 1 | agent-2:sonnet + agent-1:opus review fix | internal/health/*, cmd/mount-manager/main{,_test}.go (+check), README Stato | G-U1.3 18 health (17 planned + TestEvaluateServicesErrorNotIdle) + TestCheckCommandConfigError PASS; review §7 | unit:1.3:1 (662bbfd) |
 | phase-close | P1 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (9 pkgs, 95 PASS ≥74); P1 review §7 | unit:P1:1 (9ac75d8) |
 | sub-phase | 2.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/recovery/recovery{,_test}.go | G-U2.1 11 PASS; G-FMT ok; review §7 | unit:2.1:1 (95ce70b) |
-| sub-phase | 2.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/supervisor/supervisor{,_test}.go | G-U2.2 15 PASS -race ×3; review §7 | unit:2.2:1 |
+| sub-phase | 2.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/supervisor/supervisor{,_test}.go | G-U2.2 15 PASS -race ×3; review §7 | unit:2.2:1 (d78ee88) |
+| sub-phase | 2.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | cmd/mount-manager/main{,_test}.go (+run, shared buildDeps(cfg)) | G-U2.3 10 cmd PASS; -race ./... ok | unit:2.3:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -226,6 +227,7 @@ none
 | P1: G-FMT, G-UNIT | as §3 | pass | 9 packages ok (+compose, notify, health); 95 `--- PASS` ≥74 | 1.3 closure tree | 2026-09-24 |
 | G-U2.1 + G-FMT | as §3 | pass | 11 named PASS | 9ac75d8 + 2.1 diff | 2026-09-24 |
 | G-U2.2 + G-FMT | as §3 | pass | 15 named PASS -race | 95ce70b + 2.2 diff | 2026-09-24 |
+| G-U2.3 + G-FMT | as §3 | pass | 4 new + 6 previous cmd PASS | d78ee88 + 2.3 diff | 2026-09-24 |
 | G-UNIT (later phases), other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
@@ -272,7 +274,7 @@ none
 | 1.3 | phase_02.md | 1.1 | DONE | 1 | G-U1.3 PASS; supervisor review pass after fix |
 | 2.1 | phase_03.md | P1 | DONE | 1 | G-U2.1 11 PASS; supervisor review pass |
 | 2.2 | phase_03.md | 2.1, 1.2 | DONE | 1 | G-U2.2 15 PASS -race; supervisor review pass |
-| 2.3 | phase_03.md | 2.2 | TODO | 1 | — |
+| 2.3 | phase_03.md | 2.2 | DONE | 1 | G-U2.3 PASS |
 | 2.4 | phase_03.md | 2.3 | TODO | 1 | — |
 | 3.1 | phase_04.md | P2 | TODO | 1 | — |
 | 3.2 | phase_04.md | P2 | TODO | 1 | — |
@@ -311,7 +313,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestCheckCommandConfigError | 1.3 | G-U1.3 | PASS | 2026-09-24 |
 | TestRecover{SequenceHealthyMount,AbortFirst,PostDownStaleCleanup,DownFailsFallsBackToKill,DownAndFallbackFail,UpFails,ContextCanceled} (I-8), TestCleanup{RefusesForeignFSType (I-2),StackedMounts,GivesUpAfterMax,NoMount} | 2.1 | G-U2.1 | PASS | 2026-09-24 coordinator rerun |
 | TestStartEmitsStartupAndWaiting, TestWaiting{IdleStaysWaiting (I-1),ToMonitoringOnOK,StaleMountCleaned,GraceThenRecovery,GraceResetsWhenIdle}, TestMonitoring{ThresholdTriggersRecovery,IdleGoesWaiting (I-1)}, TestRecoveryAbortFirstFlag, TestVerifying{Success,IgnoresIdle,TimeoutBackoff}, TestRecoverErrorGoesBackoff, TestBackoffSequence, TestRunStopsOnContextCancel (I-7) | 2.2 | G-U2.2 | PASS | 2026-09-24 coordinator rerun -race |
-| TestRunCommand{MissingConfig,InvalidConfig,MissingDocker}, TestUsageListsCommands | 2.3 | G-U2.3 | TODO | — |
+| TestRunCommand{MissingConfig,InvalidConfig,MissingDocker}, TestUsageListsCommands | 2.3 | G-U2.3 | PASS | 2026-09-24 coordinator rerun |
 | TestE2E_WaitThenMonitor (E1), TestE2E_ManualDownNoRecovery (E2, I-1) | 2.4 | G-E2E-NR, G-E2E-ROOT | TODO | — |
 | TestExampleConfigLoads | 3.1 | G-U3.1 | TODO | — |
 | G-SYSTEMD static check (I-4) | 3.1 | G-SYSTEMD | TODO | — |

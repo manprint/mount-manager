@@ -81,3 +81,67 @@ func TestCheckCommandConfigError(t *testing.T) {
 		t.Fatalf("stderr is empty, want a config error")
 	}
 }
+
+func TestRunCommandMissingConfig(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--config", "/nonexistent/config.yml"}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	if !strings.Contains(stderr.String(), "config") {
+		t.Fatalf("stderr = %q, want to contain %q", stderr.String(), "config")
+	}
+}
+
+func TestRunCommandInvalidConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte("unknown_field: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--config", cfgPath}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
+	}
+	if stderr.String() == "" {
+		t.Fatalf("stderr is empty, want a config error")
+	}
+}
+
+func TestRunCommandMissingDocker(t *testing.T) {
+	dir := t.TempDir()
+	composeFile := filepath.Join(dir, "compose.yml")
+	if err := os.WriteFile(composeFile, []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgYAML := "mount_path: " + filepath.Join(dir, "mnt") + "\n" +
+		"compose_file: " + composeFile + "\n" +
+		"docker_binary: /nonexistent/docker\n"
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--config", cfgPath}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3, stderr = %q", code, stderr.String())
+	}
+	if stderr.String() == "" {
+		t.Fatalf("stderr is empty, want a docker lookup error")
+	}
+}
+
+func TestUsageListsCommands(t *testing.T) {
+	var stderr bytes.Buffer
+	usage(&stderr)
+	out := stderr.String()
+	for _, cmd := range []string{"run", "check", "probe", "version"} {
+		if !strings.Contains(out, cmd) {
+			t.Fatalf("usage = %q, want to contain %q", out, cmd)
+		}
+	}
+}
