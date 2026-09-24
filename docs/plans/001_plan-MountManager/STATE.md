@@ -97,16 +97,16 @@ Project-specific rules (all sessions):
 
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
-- Type: sub-phase
-- ID / attempt: 2.4 / 1
-- Status: CLOSED (commit reference unit:2.4:1)
-- Intent: e2e harness and non-root scenarios E1, E2
-- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_03.md §2.4
+- Type: phase-close
+- ID / attempt: P2 / 1
+- Status: CLOSED (commit reference unit:P2:1)
+- Intent: phase 2 gates and supervisor review
+- Assigned: agent-1:opus
+- File / unit heading: phase_03.md §Phase gates and closure
 - Current step: none
-- Next action: commit P2 closure (gates + review already recorded in §7), then open 3.1.
-- Next eligible plan unit: P2 / phase_03.md
-- Unit base: 8ec306d; branch: main; owned changes: committed
+- Next action: open 3.1 (phase_04.md §3.1) S1.
+- Next eligible plan unit: 3.1 / phase_04.md
+- Unit base: a0b8e15; branch: main; owned changes: STATE.md only
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -183,7 +183,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 2.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/recovery/recovery{,_test}.go | G-U2.1 11 PASS; G-FMT ok; review §7 | unit:2.1:1 (95ce70b) |
 | sub-phase | 2.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/supervisor/supervisor{,_test}.go | G-U2.2 15 PASS -race ×3; review §7 | unit:2.2:1 (d78ee88) |
 | sub-phase | 2.3 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | cmd/mount-manager/main{,_test}.go (+run, shared buildDeps(cfg)) | G-U2.3 10 cmd PASS; -race ./... ok | unit:2.3:1 (8ec306d) |
-| sub-phase | 2.4 / 1 | 1 | agent-2:sonnet + agent-1:opus (preflight fix, S4 run, README Stato) | test/e2e/{harness,scenarios}_test.go, README Test+Stato | G-FMT-E2E ok; G-E2E-NR 2 PASS (22s), no residue; review §7 | unit:2.4:1 |
+| sub-phase | 2.4 / 1 | 1 | agent-2:sonnet + agent-1:opus (preflight fix, S4 run, README Stato) | test/e2e/{harness,scenarios}_test.go, README Test+Stato | G-FMT-E2E ok; G-E2E-NR 2 PASS (22s), no residue; review §7 | unit:2.4:1 (a0b8e15) |
+| phase-close | P2 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-FMT-E2E, G-UNIT (125 PASS ≥104), G-E2E-NR pass; P2 review §7 | unit:P2:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -295,7 +296,7 @@ P3 → 3.3 (full, 9 sections). A separate documentation sub-phase exists only in
 |----|------|--------------|--------|---------------------------|
 | 0 | phase_01.md | P0 | DONE | P0 review pass (§7); unit:P0:1 |
 | 1 | phase_02.md | P1 | DONE | P1 review pass (§7); unit:P1:1 |
-| 2 | phase_03.md | P2 | IN_PROGRESS | — |
+| 2 | phase_03.md | P2 | DONE | P2 review pass (§7); unit:P2:1 |
 | 3 | phase_04.md | P3 | TODO | — |
 
 Statuses: TODO, IN_PROGRESS, IN_REVIEW, DONE, SKIPPED, BLOCKED.
