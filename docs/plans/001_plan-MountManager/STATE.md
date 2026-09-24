@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 3.2 / 1
-- Status: CLOSED (commit reference unit:3.2:1)
-- Intent: root entrypoint and e2e scenarios E3–E6
+- ID / attempt: 3.3 / 1
+- Status: CLOSED (commit reference unit:3.3:1)
+- Intent: full Italian README
 - Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_04.md §3.2
+- File / unit heading: phase_04.md §3.3
 - Current step: none
-- Next action: open 3.3 (phase_04.md §3.3) S1.
-- Next eligible plan unit: 3.3 / phase_04.md
-- Unit base: b387e76; branch: main; owned changes: e2e-root.sh, test/e2e/harness_test.go (helpers), test/e2e/recovery_test.go
+- Next action: commit P3 closure (G-FINAL + review recorded in §7).
+- Next eligible plan unit: P3 / phase_04.md
+- Unit base: a473fe1; branch: main; owned changes: README.md
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -186,7 +186,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 2.4 / 1 | 1 | agent-2:sonnet + agent-1:opus (preflight fix, S4 run, README Stato) | test/e2e/{harness,scenarios}_test.go, README Test+Stato | G-FMT-E2E ok; G-E2E-NR 2 PASS (22s), no residue; review §7 | unit:2.4:1 (a0b8e15) |
 | phase-close | P2 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-FMT-E2E, G-UNIT (125 PASS ≥104), G-E2E-NR pass; P2 review §7 | unit:P2:1 (fd9ed3c) |
 | sub-phase | 3.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus: 3 comment fixes) | deploy/mount-manager.service, deploy/config.example.yml, internal/config/config_test.go | G-U3.1 1 PASS; G-SYSTEMD pass (no diagnostics, no forbidden directive) | unit:3.1:1 (b387e76) |
-| sub-phase | 3.2 / 1 | 2 | agent-2:sonnet + agent-1:opus (rev 2 waitStale fix, S4 runs) | e2e-root.sh (0755), test/e2e/harness_test.go (+helpers, waitStale/readDirErr), test/e2e/recovery_test.go | G-FMT-E2E ok; G-E2E-ROOT run 1: 5/6 (E5 precondition) → rev 2 → run 2: 6/6 PASS, no residue; review §7 | unit:3.2:1 |
+| sub-phase | 3.2 / 1 | 2 | agent-2:sonnet + agent-1:opus (rev 2 waitStale fix, S4 runs) | e2e-root.sh (0755), test/e2e/harness_test.go (+helpers, waitStale/readDirErr), test/e2e/recovery_test.go | G-FMT-E2E ok; G-E2E-ROOT run 1: 5/6 (E5 precondition) → rev 2 → run 2: 6/6 PASS, no residue; review §7 | unit:3.2:1 (a473fe1) |
+| sub-phase | 3.3 / 1 | 2 | agent-2:sonnet + agent-1:opus (4 accuracy fixes) | README.md (9 sections) | cross-check config/events/exit codes/commands vs code (worker table) + supervisor accuracy review §7 | unit:3.3:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -237,7 +238,9 @@ none
 | G-U3.1 + G-SYSTEMD + G-FMT | as §3 | pass | TestExampleConfigLoads PASS; systemd-analyze verify: no line mentions mount-manager.service; forbidden grep empty | fd9ed3c + 3.1 diff | 2026-09-24 |
 | G-E2E-ROOT run 1 | `sudo -n <repo>/e2e-root.sh -test.run '^TestE2E_'` | fail | 5 PASS; E5 `precondition: expected stale mount (R10): statErr(mountPath) = <nil>` | b387e76 + 3.2 diff (rev 1) | 2026-09-24 |
 | G-E2E-ROOT run 2 | same | pass | 6 `--- PASS:` (E3 10.93s, E4 17.21s, E5 9.03s, E6 14.28s, E1 7.36s, E2 14.80s), final `PASS`; no containers, mounts or work dirs left | b387e76 + 3.2 diff (rev 2) | 2026-09-24 |
-| G-UNIT (later phases), other G-U*, G-E2E-* | — | not-applicable-yet | — | — | — |
+| P3 / G-FINAL: G-FMT, G-FMT-E2E, G-UNIT, G-SYSTEMD, G-E2E-NR, G-BASE | as §3 | pass | 11 packages ok, 126 `--- PASS` ≥105; systemd greps empty; E2E-NR (user) 2 PASS 7.29s/14.80s; compose config ok; no residue | a473fe1 + README (code identical to G-E2E-ROOT run 2) | 2026-09-24 |
+| G-E2E-ROOT (for G-FINAL) | see run 2 above | pass | 6 PASS on code identical to final tree (only README/state changed since) | a473fe1 | 2026-09-24 |
+| (all gates now active; none not-applicable) | | | | | |, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
 |--------|----------|---------------------------------|------------------------------|---------|
@@ -252,6 +255,8 @@ none
 | 2.4 after-diff review | agent-1:opus | rev 1; base 8ec306d + 2.4 diff | I-6 (generated alias rclone.conf only, assertRemoteIsLocal, work dir under test/e2e/.work; fix: preflight now `docker pull <img>` instead of compose on repo dir), oracles E1/E2 as specified, teardown order (manager → down → unmount/fusermount3 → RemoveAll), hostMountHealthy with 5s timeout | pass after fix |
 | P2 phase review | agent-1:opus | rev 1; 8ec306d..2.4 closure | integration run→supervisor→health/recovery/notify verified end-to-end by E1/E2; I-1 (E2 + unit), I-2 (TestCleanupRefusesForeignFSType), I-6 (harness), I-7 (TestRunStopsOnContextCancel, timeouts), I-8 (TestRecoverSequence*); README Test/Stato accurate. Noted risk for E2 flakiness (threshold 2 @1s during manual down) — not observed | pass |
 | 3.2 after-diff review | agent-1:opus | rev 2; base b387e76 + 3.2 diff | e2e-root.sh byte-exact to contract (root check, prebuilt binaries, absolute path), no other root-dir executable; requireRoot Fatal (no zero-discovery green); I-6 via shared harness; oracles E3–E6 as specified; E5 precondition fixed (rev 2) without weakening | pass |
+| 3.3 README accuracy review | agent-1:opus | rev 2; README vs final code | config table vs config.go defaults/validation, 10 events vs notify.go, check exit codes/output vs main.go, recovery sequence vs recovery.go, backoff formula, I-4 directive list vs G-SYSTEMD. Fixed: manual-down limit wording (verifying ignores idle, backoff retries down/up), `waiting` event timing, realistic payload detail, VFS cache note (`--vfs-cache-mode=full`, container recreated) | pass after fix |
+| P3 final phase review | agent-1:opus | rev 2; dec2c80..final | I-1 (E2, E5, TestWaitingIdleStaysWaiting, TestMonitoringIdleGoesWaiting), I-2 (TestCleanupRefusesForeignFSType), I-3 (probe subprocess; E4), I-4 (G-SYSTEMD), I-5 (TestUpArgs), I-6 (assertRemoteIsLocal, generated alias only, ./config never used), I-7 (timeouts, E4, TestRunStopsOnContextCancel), I-8 (TestRecoverSequence*), I-9 (TestComposeUnchangedFields); reference scenario 1–2↔E1, 3↔E2, 4↔E3, 5↔E4, 6↔E5, 7↔E6 all PASS as root, E1/E2 also as user; deploy files static-only (nothing installed); README complete | pass |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -291,7 +296,7 @@ none
 | 2.4 | phase_03.md | 2.3 | DONE | 1 | G-E2E-NR 2 PASS; supervisor review pass |
 | 3.1 | phase_04.md | P2 | DONE | 1 | G-U3.1, G-SYSTEMD pass |
 | 3.2 | phase_04.md | P2 | DONE | 1 | G-E2E-ROOT 6 PASS (rev 2); supervisor review pass |
-| 3.3 | phase_04.md | 3.1, 3.2 | TODO | 1 | — |
+| 3.3 | phase_04.md | 3.1, 3.2 | DONE | 1 | README 9 sections; cross-check + review pass |
 
 Execution order: 0.1 → 0.2 → 0.3 → 0.4 → P0 → 1.1 → 1.2 → 1.3 → P1 → 2.1 → 2.2 → 2.3 → 2.4 → P2 → 3.1 → 3.2 → 3.3 → P3.
 
@@ -338,7 +343,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | README.md: Scopo, Stato, Build (skeleton) | 0.1 | DONE | README.md created (P0 re-checks accuracy) |
 | README.md: Stato (check available) | 1.3 | DONE | README Stato mentions `check` |
 | README.md: Test, Stato | 2.4 | DONE | Test section (worker) + Stato (coordinator) |
-| README.md: full 9 sections | 3.3 | TODO | — |
+| README.md: full 9 sections | 3.3 | DONE | Scopo, Come funziona, Bootstrap compose, Configurazione, Comandi, Eventi webhook, Installazione systemd, Test, Limiti noti |
 
 ### Audits
 | Report | Verdict | Current unresolved findings | Evidence |
