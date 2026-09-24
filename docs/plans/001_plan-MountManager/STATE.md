@@ -98,15 +98,15 @@ Project-specific rules (all sessions):
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
 - Type: sub-phase
-- ID / attempt: 2.1 / 1
-- Status: CLOSED (commit reference unit:2.1:1)
-- Intent: package recovery
+- ID / attempt: 2.2 / 1
+- Status: CLOSED (commit reference unit:2.2:1)
+- Intent: package supervisor (state machine)
 - Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus
-- File / unit heading: phase_03.md §2.1
+- File / unit heading: phase_03.md §2.2
 - Current step: none
-- Next action: open 2.2 (phase_03.md §2.2) S1.
-- Next eligible plan unit: 2.2 / phase_03.md
-- Unit base: 9ac75d8; branch: main; owned changes: internal/recovery/*
+- Next action: open 2.3 (phase_03.md §2.3) S1.
+- Next eligible plan unit: 2.3 / phase_03.md
+- Unit base: 95ce70b; branch: main; owned changes: committed
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -180,7 +180,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | sub-phase | 1.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/notify/{notify,webhook,webhook_test}.go | G-U1.2 8 PASS -race; G-FMT ok | unit:1.2:1 (5bd9aea) |
 | sub-phase | 1.3 / 1 | 1 | agent-2:sonnet + agent-1:opus review fix | internal/health/*, cmd/mount-manager/main{,_test}.go (+check), README Stato | G-U1.3 18 health (17 planned + TestEvaluateServicesErrorNotIdle) + TestCheckCommandConfigError PASS; review §7 | unit:1.3:1 (662bbfd) |
 | phase-close | P1 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (9 pkgs, 95 PASS ≥74); P1 review §7 | unit:P1:1 (9ac75d8) |
-| sub-phase | 2.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/recovery/recovery{,_test}.go | G-U2.1 11 PASS; G-FMT ok; review §7 | unit:2.1:1 |
+| sub-phase | 2.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/recovery/recovery{,_test}.go | G-U2.1 11 PASS; G-FMT ok; review §7 | unit:2.1:1 (95ce70b) |
+| sub-phase | 2.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/supervisor/supervisor{,_test}.go | G-U2.2 15 PASS -race ×3; review §7 | unit:2.2:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -224,6 +225,7 @@ none
 | G-U1.3 + G-FMT | as §3 | pass | 18 health + 6 cmd PASS | 5bd9aea + 1.3 diff (incl. supervisor fix) | 2026-09-24 |
 | P1: G-FMT, G-UNIT | as §3 | pass | 9 packages ok (+compose, notify, health); 95 `--- PASS` ≥74 | 1.3 closure tree | 2026-09-24 |
 | G-U2.1 + G-FMT | as §3 | pass | 11 named PASS | 9ac75d8 + 2.1 diff | 2026-09-24 |
+| G-U2.2 + G-FMT | as §3 | pass | 15 named PASS -race | 95ce70b + 2.2 diff | 2026-09-24 |
 | G-UNIT (later phases), other G-U*, G-SYSTEMD, G-E2E-* | — | not-applicable-yet | — | — | — |
 
 | Review | Reviewer | Plan revision / reviewed change | Invariants/assertions checked | Verdict |
@@ -235,6 +237,7 @@ none
 | P1 phase review | agent-1:opus | rev 1; 662bbfd (6368a37..662bbfd) | integration (compose.Client satisfies health.ComposeAPI and recovery.ComposeOps signatures; notify.Notifier for supervisor), I-3 (health), I-5 (TestUpArgs `--pull never`), I-7 (ExecRunner SIGTERM+WaitDelay timeout, webhook async queue, TestWebhookTimeoutDoesNotBlockNotify), 9 packages discovered, README Stato accurate | pass |
 | Pre-implementation design review 2.1/2.2 | agent-1:opus | rev 1 phase_03.md §State machine, §2.1, §2.2 | pseudocode vs oracles: grace reset (t0+100 → recovery at t0+220), verify timeout → Backoff(1)=10s, retry Recover(2,true), backoff 10s→20s, abortFirst from HasMountFailure, I-1 idle paths, I-2 fstype refusal, I-8 order | pass (no change needed) |
 | 2.1 after-diff review | agent-1:opus | rev 1; base 9ac75d8 + 2.1 diff | I-2 (fstype check before every abort/detach iteration, refusal returns error), I-8 (pre-down cleanup → down / kill+down 0 → post-down cleanup with abort → up; up skipped on down failure), ctx check before each step, error wrapping strings, maxDetach=5 + final read | pass |
+| 2.2 after-diff review | agent-1:opus | rev 1; base 95ce70b + 2.2 diff | Step/runRecovery/enterBackoff/Run/Backoff line-by-line vs §State machine; I-1 (idle in Waiting/Monitoring never recovers), I-7 (Run exits on ctx cancel), I-8 via Recover; single goroutine, no mutex. Identifier fix approved: state const `Backoff` → `StateBackoff` (plan collided with func `Backoff`; String() still "backoff"; no behavior change) | pass |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -268,7 +271,7 @@ none
 | 1.2 | phase_02.md | P0 | DONE | 1 | G-U1.2 8 PASS -race |
 | 1.3 | phase_02.md | 1.1 | DONE | 1 | G-U1.3 PASS; supervisor review pass after fix |
 | 2.1 | phase_03.md | P1 | DONE | 1 | G-U2.1 11 PASS; supervisor review pass |
-| 2.2 | phase_03.md | 2.1, 1.2 | TODO | 1 | — |
+| 2.2 | phase_03.md | 2.1, 1.2 | DONE | 1 | G-U2.2 15 PASS -race; supervisor review pass |
 | 2.3 | phase_03.md | 2.2 | TODO | 1 | — |
 | 2.4 | phase_03.md | 2.3 | TODO | 1 | — |
 | 3.1 | phase_04.md | P2 | TODO | 1 | — |
@@ -307,7 +310,7 @@ SKIPPED retains a reason and does not automatically satisfy dependent units.
 | TestEvaluate{AllOK,IdleNoContainers,IdleStaleMount,MountMissingWhileRunning,WrongFSType,ProbeTimeout,ContainerNotRunning,ContainerUnhealthy,ContainerMissing,DockerError,HTTPAccepted,HTTPRejected,HTTPDisabled,ExecEmptyWhileHostHasEntries,ExecCanaryMissing}, TestServicesCached, TestReportSummary (+TestEvaluateServicesErrorNotIdle) | 1.3 | G-U1.3 | PASS | 2026-09-24 coordinator rerun |
 | TestCheckCommandConfigError | 1.3 | G-U1.3 | PASS | 2026-09-24 |
 | TestRecover{SequenceHealthyMount,AbortFirst,PostDownStaleCleanup,DownFailsFallsBackToKill,DownAndFallbackFail,UpFails,ContextCanceled} (I-8), TestCleanup{RefusesForeignFSType (I-2),StackedMounts,GivesUpAfterMax,NoMount} | 2.1 | G-U2.1 | PASS | 2026-09-24 coordinator rerun |
-| TestStartEmitsStartupAndWaiting, TestWaiting{IdleStaysWaiting (I-1),ToMonitoringOnOK,StaleMountCleaned,GraceThenRecovery,GraceResetsWhenIdle}, TestMonitoring{ThresholdTriggersRecovery,IdleGoesWaiting (I-1)}, TestRecoveryAbortFirstFlag, TestVerifying{Success,IgnoresIdle,TimeoutBackoff}, TestRecoverErrorGoesBackoff, TestBackoffSequence, TestRunStopsOnContextCancel (I-7) | 2.2 | G-U2.2 | TODO | — |
+| TestStartEmitsStartupAndWaiting, TestWaiting{IdleStaysWaiting (I-1),ToMonitoringOnOK,StaleMountCleaned,GraceThenRecovery,GraceResetsWhenIdle}, TestMonitoring{ThresholdTriggersRecovery,IdleGoesWaiting (I-1)}, TestRecoveryAbortFirstFlag, TestVerifying{Success,IgnoresIdle,TimeoutBackoff}, TestRecoverErrorGoesBackoff, TestBackoffSequence, TestRunStopsOnContextCancel (I-7) | 2.2 | G-U2.2 | PASS | 2026-09-24 coordinator rerun -race |
 | TestRunCommand{MissingConfig,InvalidConfig,MissingDocker}, TestUsageListsCommands | 2.3 | G-U2.3 | TODO | — |
 | TestE2E_WaitThenMonitor (E1), TestE2E_ManualDownNoRecovery (E2, I-1) | 2.4 | G-E2E-NR, G-E2E-ROOT | TODO | — |
 | TestExampleConfigLoads | 3.1 | G-U3.1 | TODO | — |

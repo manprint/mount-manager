@@ -1,0 +1,633 @@
+package supervisor
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"sync"
+	"testing"
+	"time"
+
+	"mount-manager/internal/config"
+	"mount-manager/internal/health"
+	"mount-manager/internal/notify"
+)
+
+// --- fakes ---
+
+type fakeHealth struct {
+	reports []health.Report
+	idx     int
+	calls   int
+}
+
+func (f *fakeHealth) Evaluate(ctx context.Context) health.Report {
+	f.calls++
+	if len(f.reports) == 0 {
+		return health.Report{}
+	}
+	if f.idx >= len(f.reports) {
+		return f.reports[len(f.reports)-1]
+	}
+	r := f.reports[f.idx]
+	f.idx++
+	return r
+}
+
+type recoverCall struct {
+	attempt    int
+	abortFirst bool
+}
+
+type fakeRecovery struct {
+	calls        []recoverCall
+	errs         []error
+	errIdx       int
+	cleanupCalls []bool
+	cleanupErr   error
+}
+
+func (f *fakeRecovery) Recover(ctx context.Context, attempt int, abortFirst bool) error {
+	f.calls = append(f.calls, recoverCall{attempt: attempt, abortFirst: abortFirst})
+	if len(f.errs) == 0 {
+		return nil
+	}
+	var err error
+	if f.errIdx < len(f.errs) {
+		err = f.errs[f.errIdx]
+		f.errIdx++
+	} else {
+		err = f.errs[len(f.errs)-1]
+	}
+	return err
+}
+
+func (f *fakeRecovery) CleanupMount(ctx context.Context, abort bool) error {
+	f.cleanupCalls = append(f.cleanupCalls, abort)
+	return f.cleanupErr
+}
+
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+type recNotifier struct {
+	mu     sync.Mutex
+	events []notify.Event
+}
+
+func (n *recNotifier) Notify(e notify.Event) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.events = append(n.events, e)
+}
+
+func (n *recNotifier) all() []notify.Event {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]notify.Event, len(n.events))
+	copy(out, n.events)
+	return out
+}
+
+// --- helpers ---
+
+var baseTime = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func testConfig() *config.Config {
+	return &config.Config{
+		MountPath:        "/mnt/m",
+		ExpectedFSType:   "fuse.rclone",
+		CheckInterval:    config.Duration{Duration: 10 * time.Second},
+		FailureThreshold: 3,
+		StartupGrace:     config.Duration{Duration: 120 * time.Second},
+		Recovery: config.Recovery{
+			VerifyTimeout:  config.Duration{Duration: 120 * time.Second},
+			BackoffInitial: config.Duration{Duration: 10 * time.Second},
+			BackoffMax:     config.Duration{Duration: 5 * time.Minute},
+		},
+	}
+}
+
+func newSup(cfg *config.Config, h Health, rec Recovery, clk Clock, n notify.Notifier) *Supervisor {
+	return New(Options{
+		Config:   cfg,
+		Health:   h,
+		Recovery: rec,
+		Notifier: n,
+		Clock:    clk,
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Host:     "host1",
+		Version:  "1.0.0",
+	})
+}
+
+func okReport() health.Report   { return health.Report{OK: true} }
+func idleReport() health.Report { return health.Report{Idle: true} }
+func staleReport() health.Report {
+	return health.Report{Idle: true, MountPresent: true, MountStale: true}
+}
+func probeFailReport() health.Report {
+	return health.Report{Failures: []health.Failure{{Check: "probe", Detail: "timeout"}}}
+}
+func httpFailReport() health.Report {
+	return health.Report{Failures: []health.Failure{{Check: "http", Detail: "status 500"}}}
+}
+
+func eventNames(events []notify.Event) []string {
+	names := make([]string, len(events))
+	for i, e := range events {
+		names[i] = e.Event
+	}
+	return names
+}
+
+func sliceEq(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// --- tests ---
+
+func TestStartEmitsStartupAndWaiting(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	sup := newSup(testConfig(), &fakeHealth{}, &fakeRecovery{}, clk, n)
+
+	sup.Start()
+
+	got := eventNames(n.all())
+	want := []string{"startup", "waiting"}
+	if !sliceEq(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	if sup.State() != Waiting {
+		t.Fatalf("state = %v, want Waiting", sup.State())
+	}
+}
+
+func TestWaitingIdleStaysWaiting(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{idleReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	for i := 0; i < 3; i++ {
+		d := sup.Step(context.Background())
+		if d != 10*time.Second {
+			t.Fatalf("step %d: duration = %v, want 10s", i, d)
+		}
+	}
+
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover calls = %d, want 0", len(rec.calls))
+	}
+	if len(rec.cleanupCalls) != 0 {
+		t.Fatalf("CleanupMount calls = %d, want 0", len(rec.cleanupCalls))
+	}
+	if len(n.all()) != 2 {
+		t.Fatalf("events = %v, want only startup+waiting", n.all())
+	}
+	if sup.State() != Waiting {
+		t.Fatalf("state = %v, want Waiting", sup.State())
+	}
+}
+
+func TestWaitingToMonitoringOnOK(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{okReport()}}
+	sup := newSup(testConfig(), h, &fakeRecovery{}, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background())
+
+	got := eventNames(n.all())
+	want := []string{"startup", "waiting", "stack_up"}
+	if !sliceEq(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	if sup.State() != Monitoring {
+		t.Fatalf("state = %v, want Monitoring", sup.State())
+	}
+}
+
+func TestWaitingStaleMountCleaned(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{staleReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background())
+
+	if len(rec.cleanupCalls) != 1 || rec.cleanupCalls[0] != true {
+		t.Fatalf("cleanupCalls = %v, want [true]", rec.cleanupCalls)
+	}
+	got := eventNames(n.all())
+	want := []string{"startup", "waiting", "stale_mount_cleaned"}
+	if !sliceEq(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+
+	// with cleanup error: no event.
+	clk2 := &fakeClock{now: baseTime}
+	n2 := &recNotifier{}
+	h2 := &fakeHealth{reports: []health.Report{staleReport()}}
+	rec2 := &fakeRecovery{cleanupErr: errFake("boom")}
+	sup2 := newSup(testConfig(), h2, rec2, clk2, n2)
+	sup2.Start()
+	sup2.Step(context.Background())
+
+	got2 := eventNames(n2.all())
+	want2 := []string{"startup", "waiting"}
+	if !sliceEq(got2, want2) {
+		t.Fatalf("events = %v, want %v (no stale_mount_cleaned on error)", got2, want2)
+	}
+}
+
+type errFake string
+
+func (e errFake) Error() string { return string(e) }
+
+func TestWaitingGraceThenRecovery(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{probeFailReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background()) // t0: grace starts
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called too early")
+	}
+
+	clk.now = baseTime.Add(119 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called at 119s, want none")
+	}
+
+	clk.now = baseTime.Add(120 * time.Second)
+	sup.Step(context.Background())
+
+	got := eventNames(n.all())
+	want := []string{"startup", "waiting", "failure_detected", "recovery_started"}
+	if !sliceEq(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+	if len(rec.calls) != 1 || rec.calls[0] != (recoverCall{attempt: 1, abortFirst: true}) {
+		t.Fatalf("recover calls = %v, want [{1 true}]", rec.calls)
+	}
+	if sup.State() != Verifying {
+		t.Fatalf("state = %v, want Verifying", sup.State())
+	}
+}
+
+func TestWaitingGraceResetsWhenIdle(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{probeFailReport(), idleReport(), probeFailReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background()) // t0: probeFail, grace starts at t0
+
+	clk.now = baseTime.Add(60 * time.Second)
+	sup.Step(context.Background()) // idle: grace resets
+
+	clk.now = baseTime.Add(100 * time.Second)
+	sup.Step(context.Background()) // probeFail: grace starts at 100s
+
+	clk.now = baseTime.Add(200 * time.Second)
+	sup.Step(context.Background()) // 100s since grace start: no recovery yet
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called too early at 200s")
+	}
+
+	clk.now = baseTime.Add(220 * time.Second)
+	sup.Step(context.Background()) // 120s since grace start: recovery
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1", len(rec.calls))
+	}
+}
+
+func TestMonitoringThresholdTriggersRecovery(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(),
+		httpFailReport(),
+		httpFailReport(),
+		okReport(),
+		httpFailReport(),
+		httpFailReport(),
+		httpFailReport(),
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background()) // ok -> monitoring
+	if sup.State() != Monitoring {
+		t.Fatalf("state = %v, want Monitoring", sup.State())
+	}
+	sup.Step(context.Background()) // fail 1
+	sup.Step(context.Background()) // fail 2
+	sup.Step(context.Background()) // ok -> reset
+	sup.Step(context.Background()) // fail 1
+	sup.Step(context.Background()) // fail 2
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called too early: %v", rec.calls)
+	}
+	sup.Step(context.Background()) // fail 3 -> recover
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1", len(rec.calls))
+	}
+}
+
+func TestMonitoringIdleGoesWaiting(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{okReport(), idleReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background()) // ok -> monitoring
+	sup.Step(context.Background()) // idle -> waiting
+
+	if sup.State() != Waiting {
+		t.Fatalf("state = %v, want Waiting", sup.State())
+	}
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover calls = %d, want 0", len(rec.calls))
+	}
+	got := eventNames(n.all())
+	want := []string{"startup", "waiting", "stack_up", "stack_stopped"}
+	if !sliceEq(got, want) {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+func TestRecoveryAbortFirstFlag(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(), probeFailReport(), probeFailReport(), probeFailReport(),
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 4; i++ {
+		sup.Step(context.Background())
+	}
+	if len(rec.calls) != 1 || rec.calls[0].abortFirst != true {
+		t.Fatalf("calls = %v, want abortFirst=true", rec.calls)
+	}
+
+	clk2 := &fakeClock{now: baseTime}
+	n2 := &recNotifier{}
+	h2 := &fakeHealth{reports: []health.Report{
+		okReport(), httpFailReport(), httpFailReport(), httpFailReport(),
+	}}
+	rec2 := &fakeRecovery{}
+	sup2 := newSup(testConfig(), h2, rec2, clk2, n2)
+	sup2.Start()
+	for i := 0; i < 4; i++ {
+		sup2.Step(context.Background())
+	}
+	if len(rec2.calls) != 1 || rec2.calls[0].abortFirst != false {
+		t.Fatalf("calls = %v, want abortFirst=false", rec2.calls)
+	}
+}
+
+func TestVerifyingSuccess(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(),       // -> monitoring
+		httpFailReport(), // fail 1
+		httpFailReport(), // fail 2
+		httpFailReport(), // fail 3 -> recover attempt 1, verifying
+		okReport(),       // verify success -> monitoring, attempt reset
+		httpFailReport(), // fail 1
+		httpFailReport(), // fail 2
+		httpFailReport(), // fail 3 -> recover attempt 1 again
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 4; i++ {
+		sup.Step(context.Background())
+	}
+	if sup.State() != Verifying {
+		t.Fatalf("state = %v, want Verifying", sup.State())
+	}
+	sup.Step(context.Background()) // verify ok
+	if sup.State() != Monitoring {
+		t.Fatalf("state = %v, want Monitoring", sup.State())
+	}
+	events := n.all()
+	if events[len(events)-1].Event != notify.EventRecoverySucceeded || events[len(events)-1].Attempt != 1 {
+		t.Fatalf("last event = %+v, want recovery_succeeded attempt 1", events[len(events)-1])
+	}
+
+	for i := 0; i < 3; i++ {
+		sup.Step(context.Background())
+	}
+	if len(rec.calls) != 2 {
+		t.Fatalf("Recover calls = %d, want 2", len(rec.calls))
+	}
+	if rec.calls[1].attempt != 1 {
+		t.Fatalf("second recovery attempt = %d, want 1", rec.calls[1].attempt)
+	}
+}
+
+func TestVerifyingIgnoresIdle(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(), httpFailReport(), httpFailReport(), httpFailReport(), idleReport(),
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 4; i++ {
+		sup.Step(context.Background())
+	}
+	if sup.State() != Verifying {
+		t.Fatalf("state = %v, want Verifying", sup.State())
+	}
+	before := len(n.all())
+	sup.Step(context.Background()) // idle, before deadline
+	if sup.State() != Verifying {
+		t.Fatalf("state = %v, want Verifying (idle ignored)", sup.State())
+	}
+	if len(n.all()) != before {
+		t.Fatalf("events changed: %v", n.all())
+	}
+}
+
+func TestVerifyingTimeoutBackoff(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(), httpFailReport(), httpFailReport(), httpFailReport(),
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 4; i++ {
+		sup.Step(context.Background())
+	}
+	if sup.State() != Verifying {
+		t.Fatalf("state = %v, want Verifying", sup.State())
+	}
+	// verifyDeadline = t0 + 120s; fail until deadline
+	clk.now = baseTime.Add(120 * time.Second)
+	d := sup.Step(context.Background())
+	if d != 10*time.Second {
+		t.Fatalf("duration = %v, want 10s", d)
+	}
+	if sup.State() != StateBackoff {
+		t.Fatalf("state = %v, want StateBackoff", sup.State())
+	}
+	events := n.all()
+	last := events[len(events)-1]
+	if last.Event != notify.EventRecoveryFailed {
+		t.Fatalf("last event = %+v, want recovery_failed", last)
+	}
+
+	callsBefore := h.calls
+	clk.now = baseTime.Add(125 * time.Second) // +5s
+	d = sup.Step(context.Background())
+	if d != 5*time.Second {
+		t.Fatalf("duration = %v, want 5s", d)
+	}
+	if h.calls != callsBefore {
+		t.Fatalf("Evaluate called during backoff wait")
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover called during backoff wait")
+	}
+
+	clk.now = baseTime.Add(130 * time.Second) // +10s
+	sup.Step(context.Background())
+	if len(rec.calls) != 2 {
+		t.Fatalf("Recover calls = %d, want 2", len(rec.calls))
+	}
+	if rec.calls[1].attempt != 2 || rec.calls[1].abortFirst != true {
+		t.Fatalf("second recover = %+v, want {2 true}", rec.calls[1])
+	}
+}
+
+func TestRecoverErrorGoesBackoff(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(), httpFailReport(), httpFailReport(), httpFailReport(),
+	}}
+	rec := &fakeRecovery{errs: []error{errFake("recover failed")}}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 4; i++ {
+		sup.Step(context.Background())
+	}
+	if sup.State() != StateBackoff {
+		t.Fatalf("state = %v, want StateBackoff", sup.State())
+	}
+	events := n.all()
+	last := events[len(events)-1]
+	if last.Event != notify.EventRecoveryFailed || last.Detail != "recover failed" {
+		t.Fatalf("last event = %+v, want recovery_failed 'recover failed'", last)
+	}
+
+	clk.now = baseTime.Add(10 * time.Second)
+	sup.Step(context.Background()) // triggers retry (attempt 2), fails again
+	if sup.State() != StateBackoff {
+		t.Fatalf("state = %v, want StateBackoff", sup.State())
+	}
+	if len(rec.calls) != 2 || rec.calls[1].attempt != 2 {
+		t.Fatalf("calls = %v, want 2nd attempt=2", rec.calls)
+	}
+	// backoff for attempt 2 should be 20s.
+	wantUntil := baseTime.Add(10 * time.Second).Add(20 * time.Second)
+	if !sup.backoffUntil.Equal(wantUntil) {
+		t.Fatalf("backoffUntil = %v, want %v", sup.backoffUntil, wantUntil)
+	}
+}
+
+func TestBackoffSequence(t *testing.T) {
+	initial := 10 * time.Second
+	max := 5 * time.Minute
+	want := []time.Duration{
+		10 * time.Second,  // n=0
+		10 * time.Second,  // n=1
+		20 * time.Second,  // n=2
+		40 * time.Second,  // n=3
+		80 * time.Second,  // n=4
+		160 * time.Second, // n=5
+		5 * time.Minute,   // n=6
+		5 * time.Minute,   // n=7
+		5 * time.Minute,   // n=8
+	}
+	for n, w := range want {
+		got := Backoff(n, initial, max)
+		if got != w {
+			t.Errorf("Backoff(%d) = %v, want %v", n, got, w)
+		}
+	}
+	if got := Backoff(1000, initial, max); got != max {
+		t.Errorf("Backoff(1000) = %v, want %v", got, max)
+	}
+	if got := Backoff(3, max, max); got != max {
+		t.Errorf("Backoff(3, max, max) = %v, want %v", got, max)
+	}
+}
+
+func TestRunStopsOnContextCancel(t *testing.T) {
+	cfg := testConfig()
+	cfg.CheckInterval = config.Duration{Duration: 10 * time.Millisecond}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{okReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(cfg, h, rec, RealClock{}, n)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sup.Run(ctx)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Run did not return within 1s")
+	}
+
+	events := n.all()
+	if len(events) == 0 || events[len(events)-1].Event != notify.EventShutdown {
+		t.Fatalf("last event = %v, want shutdown", events)
+	}
+}
