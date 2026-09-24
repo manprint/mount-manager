@@ -97,16 +97,16 @@ Project-specific rules (all sessions):
 
 - Active scope: whole plan 001 (invocation `/plan-execute-verify-mid execute 001`, 2026-09-24).
 - Scope result: RUNNING
-- Type: sub-phase
-- ID / attempt: 1.3 / 1
-- Status: CLOSED (commit reference unit:1.3:1)
-- Intent: package health and `check` command
-- Assigned: agent-2:sonnet (worker); coordinator/state writer: agent-1:opus; supervisor: agent-1:opus (review after diff)
-- File / unit heading: phase_02.md §1.3
+- Type: phase-close
+- ID / attempt: P1 / 1
+- Status: CLOSED (commit reference unit:P1:1)
+- Intent: phase 1 gates and supervisor review
+- Assigned: agent-1:opus
+- File / unit heading: phase_02.md §Phase gates and closure
 - Current step: none
-- Next action: P1 closure (gates already green on this tree, see §7) then open 2.1.
-- Next eligible plan unit: P1 / phase_02.md
-- Unit base: 5bd9aea; branch: main; owned changes: internal/health/*, cmd/mount-manager/main{,_test}.go, README.md (Stato)
+- Next action: open 2.1 (phase_03.md §2.1) S1 (design pre-review done, §7).
+- Next eligible plan unit: 2.1 / phase_03.md
+- Unit base: 662bbfd; branch: main; owned changes: STATE.md only
 - Repo state: git main.
 
 ## 2. Feature context and readiness
@@ -178,7 +178,8 @@ Required supervisor reviews cannot be silently replaced by weaker self-review.
 | phase-close | P0 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (6 pkgs ok, 55 PASS ≥35), G-BASE pass; P0 review §7 | unit:P0:1 (6368a37) |
 | sub-phase | 1.1 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/compose/{compose,runner,compose_test}.go | G-U1.1 13 PASS; -race ok; G-FMT ok | unit:1.1:1 (0e371e3) |
 | sub-phase | 1.2 / 1 | 1 | agent-2:sonnet (coord agent-1:opus) | internal/notify/{notify,webhook,webhook_test}.go | G-U1.2 8 PASS -race; G-FMT ok | unit:1.2:1 (5bd9aea) |
-| sub-phase | 1.3 / 1 | 1 | agent-2:sonnet + agent-1:opus review fix | internal/health/*, cmd/mount-manager/main{,_test}.go (+check), README Stato | G-U1.3 18 health (17 planned + TestEvaluateServicesErrorNotIdle) + TestCheckCommandConfigError PASS; review §7 | unit:1.3:1 |
+| sub-phase | 1.3 / 1 | 1 | agent-2:sonnet + agent-1:opus review fix | internal/health/*, cmd/mount-manager/main{,_test}.go (+check), README Stato | G-U1.3 18 health (17 planned + TestEvaluateServicesErrorNotIdle) + TestCheckCommandConfigError PASS; review §7 | unit:1.3:1 (662bbfd) |
+| phase-close | P1 / 1 | 1 | agent-1:opus | STATE.md (review, gates) | G-FMT, G-UNIT (9 pkgs, 95 PASS ≥74); P1 review §7 | unit:P1:1 |
 
 Commit references match trailers PEV-Plan, PEV-Unit, PEV-Attempt, PEV-Result.
 Compare exact trailer values in current HEAD's ancestry, not subject/substrings.
@@ -229,6 +230,8 @@ none
 | 0.4 after-diff review | agent-1:opus | rev 1; base b79fe0b + 0.4 diff (probe.go, main.go probe cmd) | I-3 (Runner never touches path; FS access only in `probe` subprocess), I-7 (manual timer/ctx kill, 2s reap, atomic stuck guard maxStuck=3), JSON contract, exit 3 on missing --path, race clean | pass |
 | P0 phase review | agent-1:opus | rev 1; 7a99782 (dec2c80..7a99782) | integration (CLI dispatch, config/mountinfo/unmount/probe APIs match phase_02/03 consumers), I-2 prerequisites (Entry.FSType/Minor), I-3 (probe subprocess only), I-9 (TestComposeUnchangedFields), tests discovered in all 6 packages, README Stato/Build accurate | pass |
 | 1.3 after-diff review | agent-1:opus | rev 1; base 5bd9aea + 1.3 diff | I-3 (only Deps.Mounts/Probe; no FS access), mandatory order C1→C3→idle→C2→C4→C5, idle semantics (D4). Finding fixed by supervisor: Services() error still ran PS() and could yield Idle=true with docker broken → now PS skipped, docker failure, Idle=false (+TestEvaluateServicesErrorNotIdle). Exec canary now only after successful `ls -A` (no duplicate exec failure). Summary() "idle" priority accepted | pass after fix |
+| P1 phase review | agent-1:opus | rev 1; 662bbfd (6368a37..662bbfd) | integration (compose.Client satisfies health.ComposeAPI and recovery.ComposeOps signatures; notify.Notifier for supervisor), I-3 (health), I-5 (TestUpArgs `--pull never`), I-7 (ExecRunner SIGTERM+WaitDelay timeout, webhook async queue, TestWebhookTimeoutDoesNotBlockNotify), 9 packages discovered, README Stato accurate | pass |
+| Pre-implementation design review 2.1/2.2 | agent-1:opus | rev 1 phase_03.md §State machine, §2.1, §2.2 | pseudocode vs oracles: grace reset (t0+100 → recovery at t0+220), verify timeout → Backoff(1)=10s, retry Recover(2,true), backoff 10s→20s, abortFirst from HasMountFailure, I-1 idle paths, I-2 fstype refusal, I-8 order | pass (no change needed) |
 | Cold-read 2.2 (most complex unit) | agent-1:opus (self, planner) | rev 1 phase_03.md §2.2 | first edit = types/Backoff in NEW internal/supervisor/supervisor.go; oracle = 15 named tests with explicit timings; reviewer agent-1:opus before+after; commit via PEV trailers; next step 2.3 | pass (no missing decision found; not a blind evaluation) |
 
 ## 8. Technical revisions and deviations
@@ -278,7 +281,7 @@ P3 → 3.3 (full, 9 sections). A separate documentation sub-phase exists only in
 | ID | File | Closure unit | Status | Review / commit reference |
 |----|------|--------------|--------|---------------------------|
 | 0 | phase_01.md | P0 | DONE | P0 review pass (§7); unit:P0:1 |
-| 1 | phase_02.md | P1 | IN_PROGRESS | — |
+| 1 | phase_02.md | P1 | DONE | P1 review pass (§7); unit:P1:1 |
 | 2 | phase_03.md | P2 | TODO | — |
 | 3 | phase_04.md | P3 | TODO | — |
 
