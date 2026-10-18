@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fakeRunner records the last Run call and returns configured output.
@@ -182,8 +183,11 @@ func TestExecArgs(t *testing.T) {
 	if _, err := c.Exec(context.Background(), 5*time.Second, "superdufs", "ls", "-A", "--", "/data"); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	want := append(wantBase(), "exec", "-T", "superdufs", "ls", "-A", "--", "/data")
+	want := []string{"exec", "superdufs", "ls", "-A", "--", "/data"}
 	assertArgs(t, r.args, want)
+	if r.name != "docker" {
+		t.Errorf("name = %q, want docker", r.name)
+	}
 	if r.timeout != 5*time.Second {
 		t.Errorf("timeout = %v, want 5s", r.timeout)
 	}
@@ -196,8 +200,57 @@ func TestRunErrorIncludesStderr(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "down") {
+	if !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "compose down") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRunErrorKeepsStderrTail(t *testing.T) {
+	// Compose prints progress first and the actual error last.
+	stderr := strings.Repeat(" Container x Starting\n", 100) + "dependency failed to start: container rclone-mount is unhealthy\n"
+	r := &fakeRunner{stderr: []byte(stderr), err: errors.New("exit status 1")}
+	c := newTestClient(r)
+	err := c.Up(context.Background(), 120*time.Second)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "container rclone-mount is unhealthy") {
+		t.Errorf("err = %q, want the last stderr line", msg)
+	}
+	if !strings.Contains(msg, "compose up") {
+		t.Errorf("err = %q, want to contain %q", msg, "compose up")
+	}
+}
+
+func TestRunErrorTruncatesStderr(t *testing.T) {
+	r := &fakeRunner{stderr: []byte(strings.Repeat("x", 2000)), err: errors.New("exit status 1")}
+	c := newTestClient(r)
+	err := c.Down(context.Background(), 30*time.Second)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, strings.Repeat("x", maxStderr+1)) {
+		t.Errorf("err contains more than %d bytes of stderr: len=%d", maxStderr, len(msg))
+	}
+	if !strings.Contains(msg, strings.Repeat("x", maxStderr)) {
+		t.Errorf("err = %q, want %d bytes of stderr", msg, maxStderr)
+	}
+	if !strings.Contains(msg, "down") {
+		t.Errorf("err = %q, want to contain %q", msg, "down")
+	}
+}
+
+func TestStderrTailRuneBoundary(t *testing.T) {
+	// "é" is 2 bytes: a naive byte cut can split it.
+	s := strings.Repeat("é", maxStderr)
+	got := stderrTail([]byte(s))
+	if !utf8.ValidString(got) {
+		t.Errorf("stderrTail produced invalid UTF-8: %q", got[:10])
+	}
+	if !strings.HasPrefix(got, "...") {
+		t.Errorf("stderrTail = %q..., want ... prefix", got[:10])
 	}
 }
 

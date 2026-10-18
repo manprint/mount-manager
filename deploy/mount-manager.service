@@ -8,6 +8,8 @@ Type=simple
 ExecStart=/usr/local/bin/mount-manager run --config /etc/mount-manager/config.yml
 Restart=always
 RestartSec=5
+# Exit status 3 is a configuration/usage error: restarting cannot fix it.
+RestartPreventExitStatus=3
 TimeoutStopSec=90
 KillSignal=SIGTERM
 # Must run in the host mount namespace: do not add PrivateTmp=, ProtectSystem=, ProtectHome=,

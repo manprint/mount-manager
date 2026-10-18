@@ -98,15 +98,14 @@ type builtDeps struct {
 	compose *compose.Client
 }
 
-// buildDeps resolves this process's own executable path and assembles the
-// health-check and compose dependencies shared by "check" and "run".
-func buildDeps(cfg *config.Config) (builtDeps, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return builtDeps{}, fmt.Errorf("resolve executable: %w", err)
-	}
+// selfExe re-executes this very binary for the probe subprocess, even after
+// the file on disk was replaced by an upgrade or removed.
+const selfExe = "/proc/self/exe"
 
-	runner := &probe.Runner{Exe: exe, Timeout: cfg.CheckTimeout.Duration}
+// buildDeps assembles the health-check and compose dependencies shared by
+// "check" and "run".
+func buildDeps(cfg *config.Config) builtDeps {
+	runner := &probe.Runner{Exe: selfExe, Timeout: cfg.CheckTimeout.Duration}
 	composeClient := compose.NewClient(cfg)
 
 	var httpClient *http.Client
@@ -127,7 +126,7 @@ func buildDeps(cfg *config.Config) (builtDeps, error) {
 			HTTP:    httpClient,
 		},
 		compose: composeClient,
-	}, nil
+	}
 }
 
 // runCheck implements the "check" subcommand: it loads the configuration,
@@ -146,11 +145,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 
-	deps, err := buildDeps(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 3
-	}
+	deps := buildDeps(cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -209,11 +204,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		log.Warn("not running as root: unmount and fuse abort will fail")
 	}
 
-	deps, err := buildDeps(cfg)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 3
-	}
+	deps := buildDeps(cfg)
 
 	rec := recovery.New(cfg, recovery.Deps{
 		Mounts:  mountinfo.Read,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -567,6 +568,237 @@ func TestRecoverErrorGoesBackoff(t *testing.T) {
 	wantUntil := baseTime.Add(10 * time.Second).Add(20 * time.Second)
 	if !sup.backoffUntil.Equal(wantUntil) {
 		t.Fatalf("backoffUntil = %v, want %v", sup.backoffUntil, wantUntil)
+	}
+}
+
+func dockerDownReport() health.Report {
+	return health.Report{Failures: []health.Failure{
+		{Check: "mount", Detail: "not mounted"},
+		{Check: "docker", Detail: "Cannot connect to the Docker daemon"},
+	}}
+}
+
+// backoffAfterFailedRecovery drives a supervisor through ok -> 3 http
+// failures -> failing Recover, leaving it in StateBackoff at baseTime with
+// backoffUntil = baseTime+10s. Further reports come from next.
+func backoffAfterFailedRecovery(t *testing.T, next ...health.Report) (*Supervisor, *fakeRecovery, *fakeClock, *recNotifier) {
+	t.Helper()
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	reports := append([]health.Report{okReport(), httpFailReport(), httpFailReport(), httpFailReport()}, next...)
+	h := &fakeHealth{reports: reports}
+	rec := &fakeRecovery{errs: []error{errFake("recover failed"), nil}}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 4; i++ {
+		sup.Step(context.Background())
+	}
+	if sup.State() != StateBackoff {
+		t.Fatalf("state = %v, want StateBackoff", sup.State())
+	}
+	return sup, rec, clk, n
+}
+
+func TestWaitingDockerUnavailableNoRecovery(t *testing.T) {
+	// Stack intentionally stopped, then the docker daemon goes away for
+	// longer than startup_grace: the stack must not be brought up (I-1).
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{idleReport(), dockerDownReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	for i := 0; i < 60; i++ {
+		sup.Step(context.Background())
+		clk.now = clk.now.Add(10 * time.Second)
+	}
+	if len(rec.calls) != 0 || len(rec.cleanupCalls) != 0 {
+		t.Fatalf("recover calls = %v, cleanup calls = %v, want none", rec.calls, rec.cleanupCalls)
+	}
+	if sup.State() != Waiting {
+		t.Fatalf("state = %v, want Waiting", sup.State())
+	}
+	if got := eventNames(n.all()); !sliceEq(got, []string{"startup", "waiting"}) {
+		t.Fatalf("events = %v, want only startup+waiting", got)
+	}
+}
+
+func TestWaitingDockerUnavailableResetsGrace(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{probeFailReport(), dockerDownReport(), probeFailReport()}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	sup.Step(context.Background()) // t0: grace starts
+	clk.now = baseTime.Add(60 * time.Second)
+	sup.Step(context.Background()) // docker down: grace reset
+	clk.now = baseTime.Add(100 * time.Second)
+	sup.Step(context.Background()) // grace restarts at 100s
+	clk.now = baseTime.Add(200 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called at 200s, grace must restart after the docker outage")
+	}
+	clk.now = baseTime.Add(220 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1", len(rec.calls))
+	}
+}
+
+func TestMonitoringDockerUnavailableNoRecovery(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(),
+		dockerDownReport(), dockerDownReport(), dockerDownReport(), dockerDownReport(),
+		httpFailReport(), httpFailReport(), // 2 real failures: below threshold
+		httpFailReport(), // third real failure: recovery
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	for i := 0; i < 7; i++ {
+		sup.Step(context.Background())
+	}
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover calls = %v, docker outages must not count toward the threshold", rec.calls)
+	}
+	if sup.State() != Monitoring {
+		t.Fatalf("state = %v, want Monitoring", sup.State())
+	}
+	sup.Step(context.Background())
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1", len(rec.calls))
+	}
+}
+
+func TestBackoffHoldsWhileDockerUnavailable(t *testing.T) {
+	sup, rec, clk, _ := backoffAfterFailedRecovery(t, dockerDownReport(), dockerDownReport(), httpFailReport())
+
+	clk.now = baseTime.Add(10 * time.Second)
+	if d := sup.Step(context.Background()); d != 10*time.Second {
+		t.Fatalf("duration = %v, want check interval 10s", d)
+	}
+	clk.now = baseTime.Add(20 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1 (hold while docker is unavailable)", len(rec.calls))
+	}
+	if sup.State() != StateBackoff {
+		t.Fatalf("state = %v, want StateBackoff", sup.State())
+	}
+
+	clk.now = baseTime.Add(30 * time.Second)
+	sup.Step(context.Background()) // docker back, still failing: retry
+	if len(rec.calls) != 2 || rec.calls[1].attempt != 2 {
+		t.Fatalf("calls = %v, want a second attempt numbered 2", rec.calls)
+	}
+}
+
+func TestBackoffOKGoesMonitoring(t *testing.T) {
+	sup, rec, clk, n := backoffAfterFailedRecovery(t, okReport())
+
+	clk.now = baseTime.Add(10 * time.Second)
+	sup.Step(context.Background())
+	if sup.State() != Monitoring {
+		t.Fatalf("state = %v, want Monitoring", sup.State())
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1 (no retry when already healthy)", len(rec.calls))
+	}
+	events := n.all()
+	last := events[len(events)-1]
+	if last.Event != notify.EventRecoverySucceeded || last.Attempt != 1 {
+		t.Fatalf("last event = %+v, want recovery_succeeded attempt 1", last)
+	}
+}
+
+func TestBackoffIdleStillRetries(t *testing.T) {
+	// A failed up can leave nothing running: idle in backoff still retries.
+	sup, rec, clk, _ := backoffAfterFailedRecovery(t, idleReport())
+
+	clk.now = baseTime.Add(10 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 2 {
+		t.Fatalf("Recover calls = %d, want 2", len(rec.calls))
+	}
+	if sup.State() != Verifying {
+		t.Fatalf("state = %v, want Verifying", sup.State())
+	}
+}
+
+func TestEventFields(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	cfg := testConfig()
+	h := &fakeHealth{reports: []health.Report{okReport()}}
+	sup := New(Options{
+		Config:   cfg,
+		Health:   h,
+		Recovery: &fakeRecovery{},
+		Notifier: n,
+		Clock:    clk,
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Host:     "h1",
+		Version:  "1.0.0",
+	})
+	sup.Start()
+	for _, ev := range n.all() {
+		if ev.Host != "h1" || ev.MountPath != "/mnt/m" || !ev.Timestamp.Equal(baseTime) {
+			t.Fatalf("event %+v, want Host h1, MountPath /mnt/m, Timestamp %v", ev, baseTime)
+		}
+	}
+
+	clk.now = baseTime.Add(10 * time.Second)
+	sup.Step(context.Background())
+	events := n.all()
+	last := events[len(events)-1]
+	if last.Event != notify.EventStackUp || !last.Timestamp.Equal(baseTime.Add(10*time.Second)) {
+		t.Fatalf("last event = %+v, want stack_up at T+10s", last)
+	}
+	if last.Host != "h1" || last.MountPath != "/mnt/m" {
+		t.Fatalf("last event = %+v, want Host h1, MountPath /mnt/m", last)
+	}
+}
+
+func TestRunShutdownDuringRecoveryWarns(t *testing.T) {
+	cfg := testConfig()
+	cfg.CheckInterval = config.Duration{Duration: 10 * time.Millisecond}
+	cfg.StartupGrace = config.Duration{Duration: time.Nanosecond}
+	cfg.Recovery.BackoffInitial = config.Duration{Duration: time.Hour}
+	cfg.Recovery.BackoffMax = config.Duration{Duration: time.Hour}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{probeFailReport()}}
+	rec := &fakeRecovery{errs: []error{errFake("compose up failed")}}
+	sup := newSup(cfg, h, rec, RealClock{}, n)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sup.Run(ctx) }()
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		evs := n.all()
+		if len(evs) > 0 && evs[len(evs)-1].Event == notify.EventRecoveryFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no recovery_failed within 1s: %v", eventNames(evs))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	events := n.all()
+	last := events[len(events)-1]
+	if last.Event != notify.EventShutdown || last.Attempt != 1 || !strings.Contains(last.Detail, "during recovery") {
+		t.Fatalf("last event = %+v, want shutdown during recovery, attempt 1", last)
 	}
 }
 

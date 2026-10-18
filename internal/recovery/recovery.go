@@ -43,10 +43,12 @@ func New(cfg *config.Config, d Deps) *Recoverer {
 	return &Recoverer{cfg: cfg, d: d}
 }
 
-// CleanupMount detaches the top mount at cfg.MountPath, retrying up to
-// maxDetach times. If abort is true, it aborts the FUSE connection before
-// each detach attempt. It refuses to touch a mount whose fstype does not
-// match cfg.ExpectedFSType [I-2].
+// CleanupMount detaches the expected-fstype mounts stacked at cfg.MountPath,
+// retrying up to maxDetach times. If abort is true, it aborts the FUSE
+// connection before each detach attempt. A foreign mount (fstype other than
+// cfg.ExpectedFSType) is never touched [I-2]: if one sits on top of an
+// expected mount, CleanupMount refuses; if it only sits underneath (e.g.
+// mount_path is itself a bind mount), there is nothing left to clean.
 func (r *Recoverer) CleanupMount(ctx context.Context, abort bool) error {
 	for i := 0; i < maxDetach; i++ {
 		entries, err := r.d.Mounts()
@@ -54,7 +56,7 @@ func (r *Recoverer) CleanupMount(ctx context.Context, abort bool) error {
 			return fmt.Errorf("read mountinfo: %w", err)
 		}
 		top, ok := mountinfo.Top(entries, r.cfg.MountPath)
-		if !ok {
+		if !ok || !r.hasExpected(entries) {
 			return nil
 		}
 		if top.FSType != r.cfg.ExpectedFSType {
@@ -74,10 +76,21 @@ func (r *Recoverer) CleanupMount(ctx context.Context, abort bool) error {
 	if err != nil {
 		return fmt.Errorf("read mountinfo: %w", err)
 	}
-	if _, ok := mountinfo.Top(entries, r.cfg.MountPath); ok {
+	if r.hasExpected(entries) {
 		return fmt.Errorf("mount %s still present after %d detach attempts", r.cfg.MountPath, maxDetach)
 	}
 	return nil
+}
+
+// hasExpected reports whether any mount at cfg.MountPath has the expected
+// fstype.
+func (r *Recoverer) hasExpected(entries []mountinfo.Entry) bool {
+	for _, e := range entries {
+		if e.MountPoint == r.cfg.MountPath && e.FSType == r.cfg.ExpectedFSType {
+			return true
+		}
+	}
+	return false
 }
 
 // Recover runs the full recovery sequence: pre-down cleanup, compose down

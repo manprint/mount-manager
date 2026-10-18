@@ -319,13 +319,6 @@ func (h *hookServer) close() {
 	h.srv.Close()
 }
 
-// count returns the number of events received so far.
-func (h *hookServer) count() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.events)
-}
-
 // waitEvent polls (every 200ms) for an event named name at index >= after,
 // failing the test with the list of events received so far if timeout
 // elapses first.
@@ -532,6 +525,12 @@ func (e *env) teardown() {
 		_ = e.mgrLog.Close()
 	}
 
+	// Never walk into a mount that is still there: RemoveAll could hang on
+	// a dead FUSE mount or delete files through a live one.
+	if mountPresent(e) {
+		e.t.Errorf("teardown: %s is still mounted, leaving work dir %s in place", e.mountPath, e.work)
+		return
+	}
 	if err := os.RemoveAll(e.work); err != nil {
 		e.t.Logf("teardown: remove work dir %s: %v", e.work, err)
 	}

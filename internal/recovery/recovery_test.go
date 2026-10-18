@@ -223,13 +223,79 @@ func TestRecoverUpFails(t *testing.T) {
 }
 
 func TestCleanupRefusesForeignFSType(t *testing.T) {
-	h := newHarness([][]mountinfo.Entry{{ext4Entry}})
+	// A foreign mount stacked on top of the FUSE mount: never touched (I-2).
+	h := newHarness([][]mountinfo.Entry{{fuseEntry, ext4Entry}})
 	err := h.rec.CleanupMount(context.Background(), true)
 	if err == nil || !strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("err = %v, want to contain %q", err, "refusing")
 	}
 	if countOf(h.seq, "abort 58") != 0 || countOf(h.seq, "detach") != 0 {
 		t.Errorf("expected no abort/detach, seq=%v", h.seq)
+	}
+}
+
+func TestCleanupForeignUnderlayOnly(t *testing.T) {
+	// mount_path is itself a mountpoint (e.g. self-bind + make-rshared) and
+	// no FUSE mount is left: nothing to clean, the underlay is not touched.
+	h := newHarness([][]mountinfo.Entry{{ext4Entry}})
+	if err := h.rec.CleanupMount(context.Background(), true); err != nil {
+		t.Fatalf("CleanupMount: %v", err)
+	}
+	if countOf(h.seq, "detach") != 0 {
+		t.Errorf("expected no detach, seq=%v", h.seq)
+	}
+}
+
+func TestCleanupFuseOverForeignUnderlay(t *testing.T) {
+	h := newHarness([][]mountinfo.Entry{{ext4Entry, fuseEntry}, {ext4Entry}})
+	if err := h.rec.CleanupMount(context.Background(), true); err != nil {
+		t.Fatalf("CleanupMount: %v", err)
+	}
+	want := []string{"abort 58", "detach"}
+	if got := filterSeq(h.seq, want); !equalSeq(got, want) {
+		t.Errorf("seq = %v, want exactly one abort+detach", h.seq)
+	}
+}
+
+func TestRecoverWithForeignUnderlay(t *testing.T) {
+	h := newHarness([][]mountinfo.Entry{{ext4Entry}})
+	if err := h.rec.Recover(context.Background(), 1, true); err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	want := []string{"down 30s", "up 120s"}
+	if got := filterSeq(h.seq, want); !equalSeq(got, want) {
+		t.Errorf("seq = %v, want down then up", h.seq)
+	}
+}
+
+func TestCleanupAbortErrorContinues(t *testing.T) {
+	h := newHarness([][]mountinfo.Entry{{fuseEntry}, {}})
+	h.abortErr = errors.New("abort failed")
+	if err := h.rec.CleanupMount(context.Background(), true); err != nil {
+		t.Fatalf("CleanupMount: %v", err)
+	}
+	ai, di := indexOf(h.seq, "abort 58"), indexOf(h.seq, "detach")
+	if ai < 0 || di < 0 || ai > di {
+		t.Errorf("expected abort then detach, seq=%v", h.seq)
+	}
+}
+
+func TestCleanupDetachErrorReturned(t *testing.T) {
+	busy := errors.New("busy")
+	h := newHarness([][]mountinfo.Entry{{fuseEntry}})
+	h.detachErr = busy
+	if err := h.rec.CleanupMount(context.Background(), false); !errors.Is(err, busy) {
+		t.Fatalf("CleanupMount err = %v, want %v", err, busy)
+	}
+
+	h2 := newHarness([][]mountinfo.Entry{{fuseEntry}})
+	h2.detachErr = busy
+	err := h2.rec.Recover(context.Background(), 1, false)
+	if err == nil || !strings.Contains(err.Error(), "pre-down cleanup") {
+		t.Fatalf("Recover err = %v, want to contain %q", err, "pre-down cleanup")
+	}
+	if countOf(h2.seq, "down 30s") != 0 {
+		t.Errorf("expected no down, seq=%v", h2.seq)
 	}
 }
 
@@ -274,8 +340,9 @@ func TestRecoverContextCanceled(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
-	if countOf(h.seq, "down 30s") != 0 && countOf(h.seq, "down 0s") != 0 {
-		t.Errorf("expected no down call, seq=%v", h.seq)
+	if countOf(h.seq, "down 30s") != 0 || countOf(h.seq, "down 0s") != 0 ||
+		countOf(h.seq, "kill") != 0 || countOf(h.seq, "detach") != 0 {
+		t.Errorf("expected no down/kill/detach call, seq=%v", h.seq)
 	}
 }
 

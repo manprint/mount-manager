@@ -8,14 +8,15 @@ import (
 func TestParseBasic(t *testing.T) {
 	data := "" +
 		"36 35 0:31 / /mnt/mount rw,noatime shared:1 master:2 - fuse.rclone remote: rw,user_id=0,group_id=0\n" +
-		"25 30 8:1 / /boot rw,relatime - ext4 /dev/sda1 rw\n"
+		"25 30 8:1 / /boot rw,relatime - ext4 /dev/sda1 rw\n" +
+		"40 25 0:45 / /run/user/1000 rw,nosuid,nodev - tmpfs tmpfs rw,size=1600m\n"
 
 	entries, err := Parse(strings.NewReader(data))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("got %d entries, want 2", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
 	}
 
 	e0 := entries[0]
@@ -51,6 +52,14 @@ func TestParseBasic(t *testing.T) {
 	if e1.SuperOptions != "rw" {
 		t.Errorf("e1 SuperOptions = %q, want rw", e1.SuperOptions)
 	}
+
+	e2 := entries[2]
+	if e2.MountPoint != "/run/user/1000" || e2.FSType != "tmpfs" || e2.Source != "tmpfs" {
+		t.Errorf("e2 = %+v", e2)
+	}
+	if e2.Options != "rw,nosuid,nodev" || e2.SuperOptions != "rw,size=1600m" {
+		t.Errorf("e2 Options/SuperOptions = %q/%q", e2.Options, e2.SuperOptions)
+	}
 }
 
 func TestParseEscapedMountPoint(t *testing.T) {
@@ -69,16 +78,31 @@ func TestParseEscapedMountPoint(t *testing.T) {
 }
 
 func TestParseMalformed(t *testing.T) {
+	// Line 2 has enough fields but no "-" separator.
 	data := "" +
 		"36 35 0:31 / /mnt/mount rw,noatime - fuse.rclone remote: rw\n" +
-		"25 30 8:1 / /boot rw,relatime ext4 /dev/sda1 rw\n"
+		"25 30 8:1 / /boot rw,relatime shared:1 ext4 /dev/sda1 rw\n"
 
 	_, err := Parse(strings.NewReader(data))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "line 2") {
-		t.Errorf("error = %q, want to contain %q", err.Error(), "line 2")
+	if !strings.Contains(err.Error(), "line 2") || !strings.Contains(err.Error(), "separator") {
+		t.Errorf("error = %q, want to contain %q and %q", err.Error(), "line 2", "separator")
+	}
+}
+
+func TestParseTooFewFields(t *testing.T) {
+	_, err := Parse(strings.NewReader("25 30 8:1 / /boot rw - ext4\n"))
+	if err == nil || !strings.Contains(err.Error(), "too few fields") {
+		t.Errorf("error = %v, want too few fields", err)
+	}
+}
+
+func TestUnescapeAll(t *testing.T) {
+	got := Unescape(`a\040b\011c\012d\134e`)
+	if want := "a b\tc\nd\\e"; got != want {
+		t.Errorf("Unescape = %q, want %q", got, want)
 	}
 }
 

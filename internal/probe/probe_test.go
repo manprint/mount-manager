@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,5 +162,38 @@ func TestRunnerContextCanceled(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "probe canceled") {
 		t.Fatalf("Error = %q, want to contain %q", res.Error, "probe canceled")
+	}
+}
+
+func TestKillAndReapAbandonsStuckProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	// done is never written within the 2s reap window, as for a process
+	// stuck in uninterruptible sleep on a hung FUSE mount.
+	done := make(chan error)
+	r := &Runner{}
+	start := time.Now()
+	r.killAndReap(cmd, done)
+	if elapsed := time.Since(start); elapsed < 2*time.Second || elapsed > 4*time.Second {
+		t.Fatalf("killAndReap took %v, want ~2s", elapsed)
+	}
+	if got := r.stuck.Load(); got != 1 {
+		t.Fatalf("stuck = %d, want 1", got)
+	}
+
+	done <- nil // the process is eventually reaped
+	deadline := time.Now().Add(time.Second)
+	for r.stuck.Load() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("stuck = %d after reap, want 0", r.stuck.Load())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

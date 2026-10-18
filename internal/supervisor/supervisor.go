@@ -6,6 +6,7 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -88,6 +89,8 @@ type Supervisor struct {
 	graceStart     time.Time
 	verifyDeadline time.Time
 	backoffUntil   time.Time
+	dockerDown     bool
+	idleLogged     bool
 }
 
 // New builds a Supervisor from o.
@@ -133,14 +136,32 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 		if now.Before(s.backoffUntil) {
 			return s.backoffUntil.Sub(now)
 		}
+		r := s.o.Health.Evaluate(ctx)
+		switch {
+		case s.dockerUnavailable(r):
+			return s.cfg.CheckInterval.Duration
+		case r.OK:
+			return s.recovered()
+		}
 		return s.runRecovery(ctx, true, "retry after backoff")
 	}
 
 	r := s.o.Health.Evaluate(ctx)
 
+	// Without docker the stack state (idle or not) is unknown and down/up
+	// cannot run, so hold: no grace, no failure count, no recovery.
+	if s.dockerUnavailable(r) {
+		s.graceStart = time.Time{}
+		return s.cfg.CheckInterval.Duration
+	}
+
 	switch s.state {
 	case Waiting:
 		if r.Idle {
+			if !s.idleLogged {
+				s.idleLogged = true
+				s.o.Log.Info("stack idle, waiting for a manual start (no recovery while idle)")
+			}
 			s.graceStart = time.Time{}
 			if r.MountStale {
 				if err := s.o.Recovery.CleanupMount(ctx, true); err == nil {
@@ -151,6 +172,7 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 			}
 			return s.cfg.CheckInterval.Duration
 		}
+		s.idleLogged = false
 		if r.OK {
 			s.state = Monitoring
 			s.failCount = 0
@@ -190,11 +212,7 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 
 	case Verifying:
 		if r.OK {
-			s.emit(notify.EventRecoverySucceeded, "all checks passed", s.attempt)
-			s.attempt = 0
-			s.failCount = 0
-			s.state = Monitoring
-			return s.cfg.CheckInterval.Duration
+			return s.recovered()
 		}
 		if !now.Before(s.verifyDeadline) {
 			s.emit(notify.EventRecoveryFailed, "verify timeout: "+r.Summary(), s.attempt)
@@ -203,6 +221,30 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 		return s.cfg.CheckInterval.Duration
 	}
 
+	return s.cfg.CheckInterval.Duration
+}
+
+// dockerUnavailable reports whether r could not inspect the compose
+// project, logging only when that condition starts and ends.
+func (s *Supervisor) dockerUnavailable(r health.Report) bool {
+	down := r.DockerUnavailable()
+	if down != s.dockerDown {
+		s.dockerDown = down
+		if down {
+			s.o.Log.Warn("docker unavailable, holding", "state", s.state.String(), "summary", r.Summary())
+		} else {
+			s.o.Log.Info("docker available again", "state", s.state.String())
+		}
+	}
+	return down
+}
+
+// recovered emits recovery_succeeded and moves to Monitoring.
+func (s *Supervisor) recovered() time.Duration {
+	s.emit(notify.EventRecoverySucceeded, "all checks passed", s.attempt)
+	s.attempt = 0
+	s.failCount = 0
+	s.state = Monitoring
 	return s.cfg.CheckInterval.Duration
 }
 
@@ -230,7 +272,9 @@ func (s *Supervisor) enterBackoff() time.Duration {
 }
 
 // Run drives Step in a loop until ctx is canceled, then emits a shutdown
-// event and returns nil.
+// event and returns nil. Recovery state is not persisted: when shutting down
+// during a recovery the shutdown event says so, because a restarted manager
+// sees a stopped stack as idle and never restarts it (I-1).
 func (s *Supervisor) Run(ctx context.Context) error {
 	s.Start()
 loop:
@@ -246,6 +290,12 @@ loop:
 			break loop
 		case <-t.C:
 		}
+	}
+	if s.state == Verifying || s.state == StateBackoff {
+		detail := fmt.Sprintf("signal received during recovery (attempt %d, state %s): the stack may be left stopped and is not restarted automatically", s.attempt, s.state)
+		s.o.Log.Warn("shutdown during recovery", "attempt", s.attempt, "state", s.state.String())
+		s.emit(notify.EventShutdown, detail, s.attempt)
+		return nil
 	}
 	s.emit(notify.EventShutdown, "signal received", 0)
 	return nil

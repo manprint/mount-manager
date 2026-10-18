@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -75,7 +76,11 @@ func (w *Webhook) send(ev Event) {
 		w.log.Warn("webhook delivery failed", "event", ev.Event, "error", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Drain so the keep-alive connection can be reused.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode >= 300 {
 		w.log.Warn("webhook delivery failed", "event", ev.Event, "status", resp.StatusCode)
 	}

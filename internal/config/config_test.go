@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -325,6 +326,20 @@ func TestValidateErrors(t *testing.T) {
 		}, "checks.exec.path"},
 		{"webhook url invalid", func(c *Config) { c.Webhook.URL = "not a url" }, "webhook.url"},
 		{"webhook header empty key", func(c *Config) { c.Webhook.Headers = map[string]string{"": "v"} }, "webhook.headers"},
+		{"check_interval negative", func(c *Config) { c.CheckInterval = Duration{-time.Second} }, "check_interval: must be > 0"},
+		{"check_interval zero", func(c *Config) { c.CheckInterval = Duration{} }, "check_interval: must be > 0"},
+		{"failure_threshold zero", func(c *Config) { c.FailureThreshold = 0 }, "failure_threshold"},
+		{"project_directory relative", func(c *Config) { c.ProjectDirectory = "rel" }, "project_directory"},
+		{"project_directory missing", func(c *Config) { c.ProjectDirectory = "/nonexistent-mm-dir" }, "project_directory"},
+		{"project_directory not dir", func(c *Config) { c.ProjectDirectory = c.ComposeFile }, "project_directory"},
+		{"compose_file relative", func(c *Config) { c.ComposeFile = "rel.yml" }, "compose_file"},
+		{"compose_file not regular", func(c *Config) { c.ComposeFile = c.ProjectDirectory }, "compose_file"},
+		{"http url empty host", func(c *Config) { c.Checks.HTTP.URL = "http://" }, "checks.http.url"},
+		{"accept_status 600", func(c *Config) { c.Checks.HTTP.AcceptStatus = []int{600} }, "checks.http.accept_status"},
+		{"accept_status empty with url", func(c *Config) {
+			c.Checks.HTTP.URL = "http://127.0.0.1:5000/"
+			c.Checks.HTTP.AcceptStatus = nil
+		}, "checks.http.accept_status"},
 	}
 
 	for _, tc := range cases {
@@ -382,5 +397,119 @@ func TestValidateAggregatesErrors(t *testing.T) {
 	}
 	if !strings.Contains(msg, "log_level") {
 		t.Errorf("error = %q, missing log_level", msg)
+	}
+}
+
+func TestLoadExplicitZeroRejected(t *testing.T) {
+	_, composeFile := setupComposeFile(t)
+	yamlSrc := fmt.Sprintf("mount_path: /mnt/mount\ncompose_file: %s\ncheck_interval: 0s\nfailure_threshold: 0\n", composeFile)
+
+	_, err := LoadBytes([]byte(yamlSrc))
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, want := range []string{"check_interval", "failure_threshold"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+}
+
+func TestLoadNullSectionKeepsDefaults(t *testing.T) {
+	_, composeFile := setupComposeFile(t)
+	yamlSrc := fmt.Sprintf("mount_path: /mnt/mount\ncompose_file: %s\nrecovery:\nchecks:\n  http:\n    timeout: 7s\n", composeFile)
+
+	cfg, err := LoadBytes([]byte(yamlSrc))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if cfg.Recovery.BackoffMax.Duration != 5*time.Minute {
+		t.Errorf("Recovery.BackoffMax = %v, want default 5m", cfg.Recovery.BackoffMax.Duration)
+	}
+	if cfg.Checks.HTTP.Timeout.Duration != 7*time.Second {
+		t.Errorf("Checks.HTTP.Timeout = %v, want 7s", cfg.Checks.HTTP.Timeout.Duration)
+	}
+	if len(cfg.Checks.HTTP.AcceptStatus) != 3 {
+		t.Errorf("Checks.HTTP.AcceptStatus = %v, want defaults", cfg.Checks.HTTP.AcceptStatus)
+	}
+	if cfg.Checks.Exec.Timeout.Duration != 10*time.Second {
+		t.Errorf("Checks.Exec.Timeout = %v, want default 10s", cfg.Checks.Exec.Timeout.Duration)
+	}
+}
+
+func TestExecPathDefault(t *testing.T) {
+	_, composeFile := setupComposeFile(t)
+
+	cfg, err := LoadBytes([]byte(fmt.Sprintf("mount_path: /mnt/mount\ncompose_file: %s\nchecks:\n  exec:\n    service: superdufs\n", composeFile)))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if cfg.Checks.Exec.Path != "/data" {
+		t.Errorf("Checks.Exec.Path = %q, want /data", cfg.Checks.Exec.Path)
+	}
+
+	cfg, err = LoadBytes([]byte(fmt.Sprintf("mount_path: /mnt/mount\ncompose_file: %s\n", composeFile)))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if cfg.Checks.Exec.Path != "" {
+		t.Errorf("Checks.Exec.Path = %q, want empty without a service", cfg.Checks.Exec.Path)
+	}
+}
+
+func TestLogLevelValue(t *testing.T) {
+	cases := map[string]slog.Level{
+		"debug": slog.LevelDebug,
+		"info":  slog.LevelInfo,
+		"warn":  slog.LevelWarn,
+		"error": slog.LevelError,
+	}
+	for in, want := range cases {
+		c := &Config{LogLevel: in}
+		if got := c.LogLevelValue(); got != want {
+			t.Errorf("LogLevelValue(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestMountPathSymlinkRejected(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(filepath.Join(real, "mymount"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "mymount"), filepath.Join(base, "leaf")); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := map[string]string{
+		"parent symlink": filepath.Join(base, "link", "mymount"),
+		"leaf symlink":   filepath.Join(base, "leaf"),
+	}
+	for name, p := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfig(t)
+			cfg.MountPath = p
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "mount_path") || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("err = %v, want a mount_path symlink error", err)
+			}
+		})
+	}
+
+	for name, p := range map[string]string{
+		"real dir":    filepath.Join(real, "mymount"),
+		"not created": filepath.Join(real, "later"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfig(t)
+			cfg.MountPath = p
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+		})
 	}
 }

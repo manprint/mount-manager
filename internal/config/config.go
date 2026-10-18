@@ -96,88 +96,70 @@ func Load(path string) (*Config, error) {
 	return LoadBytes(data)
 }
 
-// LoadBytes decodes data as YAML with strict (known-fields-only) decoding,
-// applies defaults and validates the result.
+// LoadBytes decodes data as YAML with strict (known-fields-only) decoding
+// on top of the defaults, fills the derived defaults and validates the
+// result. A key that is absent keeps its default; an explicit zero value is
+// kept as written and rejected by Validate where zero is not allowed.
 func LoadBytes(data []byte) (*Config, error) {
-	var cfg Config
+	cfg := defaults()
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil {
+	if err := dec.Decode(cfg); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, errors.New("config: empty document")
 		}
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
-	cfg.applyDefaults()
+	cfg.applyDerivedDefaults()
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
-// applyDefaults fills in default values for zero fields.
-func (c *Config) applyDefaults() {
-	if c.DockerBinary == "" {
-		c.DockerBinary = "docker"
+// defaults returns a Config holding every default that does not depend on
+// another field.
+func defaults() *Config {
+	return &Config{
+		DockerBinary:     "docker",
+		ExpectedFSType:   "fuse.rclone",
+		CheckInterval:    Duration{10 * time.Second},
+		CheckTimeout:     Duration{10 * time.Second},
+		FailureThreshold: 3,
+		StartupGrace:     Duration{120 * time.Second},
+		LogLevel:         "info",
+		Recovery: Recovery{
+			DownTimeout:    Duration{30 * time.Second},
+			UpWaitTimeout:  Duration{120 * time.Second},
+			VerifyTimeout:  Duration{120 * time.Second},
+			CommandGrace:   Duration{60 * time.Second},
+			BackoffInitial: Duration{10 * time.Second},
+			BackoffMax:     Duration{5 * time.Minute},
+		},
+		Checks: Checks{
+			HTTP: HTTPCheck{
+				Timeout:      Duration{5 * time.Second},
+				AcceptStatus: []int{200, 401, 403},
+			},
+			Exec: ExecCheck{
+				Timeout: Duration{10 * time.Second},
+			},
+		},
+		Webhook: Webhook{
+			Timeout: Duration{5 * time.Second},
+		},
 	}
-	if c.ExpectedFSType == "" {
-		c.ExpectedFSType = "fuse.rclone"
-	}
-	if c.CheckInterval.Duration == 0 {
-		c.CheckInterval.Duration = 10 * time.Second
-	}
-	if c.CheckTimeout.Duration == 0 {
-		c.CheckTimeout.Duration = 10 * time.Second
-	}
-	if c.FailureThreshold == 0 {
-		c.FailureThreshold = 3
-	}
-	if c.StartupGrace.Duration == 0 {
-		c.StartupGrace.Duration = 120 * time.Second
-	}
-	if c.LogLevel == "" {
-		c.LogLevel = "info"
-	}
-	if c.ProjectDirectory == "" {
+}
+
+// applyDerivedDefaults fills the defaults that depend on other fields.
+func (c *Config) applyDerivedDefaults() {
+	if c.ProjectDirectory == "" && c.ComposeFile != "" {
 		c.ProjectDirectory = filepath.Dir(c.ComposeFile)
-	}
-
-	if c.Recovery.DownTimeout.Duration == 0 {
-		c.Recovery.DownTimeout.Duration = 30 * time.Second
-	}
-	if c.Recovery.UpWaitTimeout.Duration == 0 {
-		c.Recovery.UpWaitTimeout.Duration = 120 * time.Second
-	}
-	if c.Recovery.VerifyTimeout.Duration == 0 {
-		c.Recovery.VerifyTimeout.Duration = 120 * time.Second
-	}
-	if c.Recovery.CommandGrace.Duration == 0 {
-		c.Recovery.CommandGrace.Duration = 60 * time.Second
-	}
-	if c.Recovery.BackoffInitial.Duration == 0 {
-		c.Recovery.BackoffInitial.Duration = 10 * time.Second
-	}
-	if c.Recovery.BackoffMax.Duration == 0 {
-		c.Recovery.BackoffMax.Duration = 5 * time.Minute
-	}
-
-	if c.Checks.HTTP.Timeout.Duration == 0 {
-		c.Checks.HTTP.Timeout.Duration = 5 * time.Second
-	}
-	if len(c.Checks.HTTP.AcceptStatus) == 0 {
-		c.Checks.HTTP.AcceptStatus = []int{200, 401, 403}
 	}
 	if c.Checks.Exec.Service != "" && c.Checks.Exec.Path == "" {
 		c.Checks.Exec.Path = "/data"
-	}
-	if c.Checks.Exec.Timeout.Duration == 0 {
-		c.Checks.Exec.Timeout.Duration = 10 * time.Second
-	}
-
-	if c.Webhook.Timeout.Duration == 0 {
-		c.Webhook.Timeout.Duration = 5 * time.Second
 	}
 }
 
@@ -197,6 +179,8 @@ func (c *Config) Validate() error {
 		addf("mount_path", "must be clean")
 	} else if c.MountPath == "/" {
 		addf("mount_path", "must not be /")
+	} else if err := checkNoSymlink(c.MountPath); err != nil {
+		addf("mount_path", err.Error())
 	}
 
 	if c.ComposeFile == "" {
@@ -209,12 +193,16 @@ func (c *Config) Validate() error {
 		addf("compose_file", "must be a regular file")
 	}
 
-	if !filepath.IsAbs(c.ProjectDirectory) {
-		addf("project_directory", "must be absolute")
-	} else if fi, err := os.Stat(c.ProjectDirectory); err != nil {
-		addf("project_directory", "stat failed: "+err.Error())
-	} else if !fi.IsDir() {
-		addf("project_directory", "must be a directory")
+	// An empty project_directory means compose_file is missing too (it is
+	// derived from it), which is already reported.
+	if c.ProjectDirectory != "" {
+		if !filepath.IsAbs(c.ProjectDirectory) {
+			addf("project_directory", "must be absolute")
+		} else if fi, err := os.Stat(c.ProjectDirectory); err != nil {
+			addf("project_directory", "stat failed: "+err.Error())
+		} else if !fi.IsDir() {
+			addf("project_directory", "must be a directory")
+		}
 	}
 
 	if c.ExpectedFSType == "" {
@@ -290,6 +278,9 @@ func (c *Config) Validate() error {
 	validateURL("checks.http.url", c.Checks.HTTP.URL)
 	validateURL("webhook.url", c.Webhook.URL)
 
+	if c.Checks.HTTP.URL != "" && len(c.Checks.HTTP.AcceptStatus) == 0 {
+		addf("checks.http.accept_status", "must not be empty when checks.http.url is set")
+	}
 	for _, s := range c.Checks.HTTP.AcceptStatus {
 		if s < 100 || s > 599 {
 			addf("checks.http.accept_status", fmt.Sprintf("value %d out of range 100..599", s))
@@ -307,6 +298,28 @@ func (c *Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// checkNoSymlink returns an error if p (absolute and clean) contains a
+// symlink: mountinfo reports resolved paths, so a symlinked mount_path would
+// never match and the mount would always look missing. It never stats p
+// itself, which may be a hung FUSE mount (I-3): the parent is resolved with
+// EvalSymlinks, and p is only passed to Readlink, which fails with EINVAL on
+// a directory or mount root without a request to the filesystem. Paths that
+// do not exist yet are accepted.
+func checkNoSymlink(p string) error {
+	parent := filepath.Dir(p)
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return nil
+	}
+	if resolved != parent {
+		return fmt.Errorf("must not contain symlinks (%s resolves to %s)", parent, resolved)
+	}
+	if target, err := os.Readlink(p); err == nil {
+		return fmt.Errorf("must not be a symlink (points to %s)", target)
+	}
+	return nil
 }
 
 // LogLevelValue converts LogLevel to a slog.Level.

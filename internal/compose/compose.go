@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mount-manager/internal/config"
 )
@@ -56,24 +57,38 @@ func (c *Client) base() []string {
 	return []string{"compose", "-f", c.File, "--project-directory", c.ProjectDir}
 }
 
+// maxStderr bounds the stderr excerpt attached to command errors.
+const maxStderr = 500
+
 // run executes sub with the given full args and timeout, wrapping any error
-// with the subcommand name and truncated stderr.
+// with the subcommand name and the tail of stderr.
 func (c *Client) run(ctx context.Context, timeout time.Duration, sub string, args ...string) ([]byte, error) {
 	stdout, stderr, err := c.Runner.Run(ctx, timeout, c.Docker, args...)
 	if err != nil {
-		trimmed := strings.TrimSpace(string(stderr))
-		if len(trimmed) > 500 {
-			trimmed = trimmed[:500]
-		}
-		return stdout, fmt.Errorf("docker compose %s: %w: %s", sub, err, trimmed)
+		return stdout, fmt.Errorf("docker %s: %w: %s", sub, err, stderrTail(stderr))
 	}
 	return stdout, nil
+}
+
+// stderrTail returns the last maxStderr bytes of b, trimmed and cut on a rune
+// boundary. Compose prints progress lines first and the actual error last, so
+// the tail is the informative part.
+func stderrTail(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) <= maxStderr {
+		return s
+	}
+	i := len(s) - maxStderr
+	for i < len(s) && !utf8.RuneStart(s[i]) {
+		i++
+	}
+	return "..." + s[i:]
 }
 
 // Services returns the list of services declared by the compose file.
 func (c *Client) Services(ctx context.Context) ([]string, error) {
 	args := append(c.base(), "config", "--services")
-	out, err := c.run(ctx, 30*time.Second, "config", args...)
+	out, err := c.run(ctx, 30*time.Second, "compose config", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +106,7 @@ func (c *Client) Services(ctx context.Context) ([]string, error) {
 // PS returns the current containers of the project.
 func (c *Client) PS(ctx context.Context) ([]Container, error) {
 	args := append(c.base(), "ps", "-a", "--format", "json")
-	out, err := c.run(ctx, 30*time.Second, "ps", args...)
+	out, err := c.run(ctx, 30*time.Second, "compose ps", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,28 +117,29 @@ func (c *Client) PS(ctx context.Context) ([]Container, error) {
 // seconds for graceful shutdown.
 func (c *Client) Down(ctx context.Context, stop time.Duration) error {
 	args := append(c.base(), "down", "-t", secs(stop))
-	_, err := c.run(ctx, stop+c.Grace, "down", args...)
+	_, err := c.run(ctx, stop+c.Grace, "compose down", args...)
 	return err
 }
 
 // Kill force-stops the project's containers.
 func (c *Client) Kill(ctx context.Context) error {
 	args := append(c.base(), "kill")
-	_, err := c.run(ctx, c.Grace, "kill", args...)
+	_, err := c.run(ctx, c.Grace, "compose kill", args...)
 	return err
 }
 
 // Up starts the project's containers, always disallowing image pulls (I-5).
 func (c *Client) Up(ctx context.Context, wait time.Duration) error {
 	args := append(c.base(), "up", "-d", "--pull", "never", "--wait", "--wait-timeout", secs(wait))
-	_, err := c.run(ctx, wait+c.Grace, "up", args...)
+	_, err := c.run(ctx, wait+c.Grace, "compose up", args...)
 	return err
 }
 
-// Exec runs cmd inside service's container without a TTY.
-func (c *Client) Exec(ctx context.Context, timeout time.Duration, service string, cmd ...string) ([]byte, error) {
-	args := append(c.base(), "exec", "-T", service)
-	args = append(args, cmd...)
+// Exec runs cmd inside the named container without a TTY. It uses plain
+// `docker exec` on a container name taken from PS, which avoids loading the
+// compose project on every health check.
+func (c *Client) Exec(ctx context.Context, timeout time.Duration, container string, cmd ...string) ([]byte, error) {
+	args := append([]string{"exec", container}, cmd...)
 	return c.run(ctx, timeout, "exec", args...)
 }
 

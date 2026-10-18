@@ -11,6 +11,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -26,7 +27,7 @@ import (
 type ComposeAPI interface {
 	Services(ctx context.Context) ([]string, error)
 	PS(ctx context.Context) ([]compose.Container, error)
-	Exec(ctx context.Context, timeout time.Duration, service string, cmd ...string) ([]byte, error)
+	Exec(ctx context.Context, timeout time.Duration, container string, cmd ...string) ([]byte, error)
 }
 
 // Deps are the external dependencies used by Evaluate. All fields are
@@ -48,8 +49,6 @@ type Failure struct {
 // Report is the outcome of one Evaluate call.
 type Report struct {
 	Idle, OK, MountPresent, MountStale bool
-	MountEntry                         mountinfo.Entry
-	Running                            int
 	Failures                           []Failure
 }
 
@@ -68,6 +67,18 @@ func (r Report) Summary() string {
 	return strings.Join(parts, "; ")
 }
 
+// DockerUnavailable reports whether Failures contains a "docker" check: the
+// compose project could not be inspected, so whether the stack is idle is
+// unknown.
+func (r Report) DockerUnavailable() bool {
+	for _, f := range r.Failures {
+		if f.Check == "docker" {
+			return true
+		}
+	}
+	return false
+}
+
 // HasMountFailure reports whether Failures contains a "mount" or "probe"
 // check.
 func (r Report) HasMountFailure() bool {
@@ -80,7 +91,9 @@ func (r Report) HasMountFailure() bool {
 }
 
 // Checker evaluates the health-check suite for a single configuration. It
-// caches the compose services list across calls, once known.
+// caches the compose services list across calls, once known, and drops the
+// cache when the stack is idle or a service has no container, so that edits
+// to the compose file are picked up.
 type Checker struct {
 	cfg      *config.Config
 	d        Deps
@@ -114,7 +127,6 @@ func (c *Checker) Evaluate(ctx context.Context) Report {
 		r.Failures = append(r.Failures, Failure{"mount", fmt.Sprintf("unexpected fstype %s", top.FSType)})
 	} else {
 		r.MountPresent = true
-		r.MountEntry = top
 	}
 
 	// 2. C3: compose services + ps, running count, idle, per-service checks.
@@ -143,9 +155,9 @@ func (c *Checker) Evaluate(ctx context.Context) Report {
 				running++
 			}
 		}
-		r.Running = running
 		r.Idle = running == 0
 
+		stale := r.Idle
 		for _, svc := range c.services {
 			var found *compose.Container
 			for i := range containers {
@@ -157,11 +169,15 @@ func (c *Checker) Evaluate(ctx context.Context) Report {
 			switch {
 			case found == nil:
 				r.Failures = append(r.Failures, Failure{"containers", svc + ": missing"})
+				stale = true
 			case found.State != "running":
 				r.Failures = append(r.Failures, Failure{"containers", svc + ": state=" + found.State})
 			case found.Health != "" && found.Health != "healthy":
 				r.Failures = append(r.Failures, Failure{"containers", svc + ": health=" + found.Health})
 			}
+		}
+		if stale {
+			c.services = nil
 		}
 	}
 
@@ -206,23 +222,28 @@ func (c *Checker) Evaluate(ctx context.Context) Report {
 				if !accepted {
 					r.Failures = append(r.Failures, Failure{"http", fmt.Sprintf("status %d", resp.StatusCode)})
 				}
-				resp.Body.Close()
+				// Drain so the keep-alive connection can be reused.
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+				_ = resp.Body.Close()
 			}
 		}
 	}
 
-	// 6. C5: exec check, only if C2 ran and was OK.
+	// 6. C5: exec check, only if C2 ran and was OK. It runs in the exec
+	// service's running container, found in the PS output above.
 	if c.cfg.Checks.Exec.Service != "" && r.MountPresent && probeOK {
 		svc := c.cfg.Checks.Exec.Service
 		timeout := c.cfg.Checks.Exec.Timeout.Duration
-		out, err := c.d.Compose.Exec(ctx, timeout, svc, "ls", "-A", "--", c.cfg.Checks.Exec.Path)
-		if err != nil {
+		name := runningContainer(containers, svc)
+		if name == "" {
+			r.Failures = append(r.Failures, Failure{"exec", svc + ": no running container"})
+		} else if out, err := c.d.Compose.Exec(ctx, timeout, name, "ls", "-A", "--", c.cfg.Checks.Exec.Path); err != nil {
 			r.Failures = append(r.Failures, Failure{"exec", err.Error()})
 		} else if hostEntries && strings.TrimSpace(string(out)) == "" {
 			r.Failures = append(r.Failures, Failure{"exec", "container sees empty directory while host mount has entries"})
 		} else if c.cfg.Checks.Canary != "" {
 			canaryPath := path.Join(c.cfg.Checks.Exec.Path, c.cfg.Checks.Canary)
-			if _, err := c.d.Compose.Exec(ctx, timeout, svc, "ls", "-d", "--", canaryPath); err != nil {
+			if _, err := c.d.Compose.Exec(ctx, timeout, name, "ls", "-d", "--", canaryPath); err != nil {
 				r.Failures = append(r.Failures, Failure{"exec", "canary: " + err.Error()})
 			}
 		}
@@ -231,4 +252,15 @@ func (c *Checker) Evaluate(ctx context.Context) Report {
 	// 7. OK.
 	r.OK = len(r.Failures) == 0 && !r.Idle
 	return r
+}
+
+// runningContainer returns the name of service's running container in
+// containers, or "" if there is none.
+func runningContainer(containers []compose.Container, service string) string {
+	for _, ct := range containers {
+		if ct.Service == service && ct.State == "running" {
+			return ct.Name
+		}
+	}
+	return ""
 }

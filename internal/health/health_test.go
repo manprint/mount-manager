@@ -41,7 +41,7 @@ func mountedEntries() []mountinfo.Entry {
 type fakeCompose struct {
 	servicesFn func(ctx context.Context) ([]string, error)
 	psFn       func(ctx context.Context) ([]compose.Container, error)
-	execFn     func(ctx context.Context, timeout time.Duration, service string, cmd ...string) ([]byte, error)
+	execFn     func(ctx context.Context, timeout time.Duration, container string, cmd ...string) ([]byte, error)
 
 	servicesCalls int
 	psCalls       int
@@ -58,10 +58,10 @@ func (f *fakeCompose) PS(ctx context.Context) ([]compose.Container, error) {
 	return f.psFn(ctx)
 }
 
-func (f *fakeCompose) Exec(ctx context.Context, timeout time.Duration, service string, cmd ...string) ([]byte, error) {
+func (f *fakeCompose) Exec(ctx context.Context, timeout time.Duration, container string, cmd ...string) ([]byte, error) {
 	f.execCalls++
 	if f.execFn != nil {
-		return f.execFn(ctx, timeout, service, cmd...)
+		return f.execFn(ctx, timeout, container, cmd...)
 	}
 	return nil, nil
 }
@@ -594,6 +594,144 @@ func TestServicesCached(t *testing.T) {
 
 	if fc.servicesCalls != 1 {
 		t.Fatalf("Services calls = %d, want 1", fc.servicesCalls)
+	}
+}
+
+func TestServicesRefreshedWhenIdle(t *testing.T) {
+	cfg := baseConfig()
+	ps := runningContainersFn
+	fc := &fakeCompose{
+		servicesFn: defaultServicesFn,
+		psFn: func(ctx context.Context) ([]compose.Container, error) {
+			return ps(ctx)
+		},
+	}
+	sp := &probeSpy{result: probe.Result{OK: true}}
+	c := New(cfg, Deps{Mounts: mountsOK, Probe: sp.fn, Compose: fc})
+
+	c.Evaluate(context.Background()) // running: services cached
+	ps = emptyPSFn
+	c.Evaluate(context.Background()) // idle: cache dropped
+	ps = runningContainersFn
+	c.Evaluate(context.Background()) // running again: services reloaded
+
+	if fc.servicesCalls != 2 {
+		t.Fatalf("Services calls = %d, want 2", fc.servicesCalls)
+	}
+}
+
+func TestServicesRefreshedWhenServiceMissing(t *testing.T) {
+	// The compose file renamed rclone-mount to rclone: the cached list still
+	// names the old service, which must not stay "missing" forever.
+	cfg := baseConfig()
+	services := []string{"rclone-mount", "superdufs"}
+	fc := &fakeCompose{
+		servicesFn: func(ctx context.Context) ([]string, error) { return services, nil },
+		psFn: func(ctx context.Context) ([]compose.Container, error) {
+			return []compose.Container{
+				{Name: "r", Service: "rclone", State: "running"},
+				{Name: "s", Service: "superdufs", State: "running"},
+			}, nil
+		},
+	}
+	sp := &probeSpy{result: probe.Result{OK: true}}
+	c := New(cfg, Deps{Mounts: mountsOK, Probe: sp.fn, Compose: fc})
+
+	r := c.Evaluate(context.Background())
+	if r.OK {
+		t.Fatalf("OK = true on first evaluation, want rclone-mount missing")
+	}
+	services = []string{"rclone", "superdufs"}
+	r = c.Evaluate(context.Background())
+	if !r.OK {
+		t.Fatalf("OK = false after services reload, Failures = %+v", r.Failures)
+	}
+	if fc.servicesCalls != 2 {
+		t.Fatalf("Services calls = %d, want 2", fc.servicesCalls)
+	}
+}
+
+func TestEvaluateExecUsesContainerName(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Checks.Exec.Service = "superdufs"
+	cfg.Checks.Exec.Path = "/data"
+	var targets []string
+	fc := &fakeCompose{
+		servicesFn: defaultServicesFn,
+		psFn:       runningContainersFn,
+		execFn: func(ctx context.Context, timeout time.Duration, container string, cmd ...string) ([]byte, error) {
+			targets = append(targets, container)
+			return []byte("somefile\n"), nil
+		},
+	}
+	sp := &probeSpy{result: probe.Result{OK: true, HasEntries: true}}
+	c := New(cfg, Deps{Mounts: mountsOK, Probe: sp.fn, Compose: fc})
+
+	r := c.Evaluate(context.Background())
+	if !r.OK {
+		t.Fatalf("OK = false, Failures = %+v", r.Failures)
+	}
+	if len(targets) != 1 || targets[0] != "m-superdufs-1" {
+		t.Fatalf("exec targets = %v, want [m-superdufs-1]", targets)
+	}
+}
+
+func TestEvaluateExecNoRunningContainer(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Checks.Exec.Service = "superdufs"
+	cfg.Checks.Exec.Path = "/data"
+	fc := &fakeCompose{
+		servicesFn: defaultServicesFn,
+		psFn: func(ctx context.Context) ([]compose.Container, error) {
+			return []compose.Container{
+				{Name: "m-rclone-mount-1", Service: "rclone-mount", State: "running"},
+				{Name: "m-superdufs-1", Service: "superdufs", State: "exited"},
+			}, nil
+		},
+	}
+	sp := &probeSpy{result: probe.Result{OK: true}}
+	c := New(cfg, Deps{Mounts: mountsOK, Probe: sp.fn, Compose: fc})
+
+	r := c.Evaluate(context.Background())
+	want := Failure{"exec", "superdufs: no running container"}
+	found := false
+	for _, f := range r.Failures {
+		if f == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Failures = %+v, want to contain %+v", r.Failures, want)
+	}
+	if fc.execCalls != 0 {
+		t.Fatalf("exec calls = %d, want 0", fc.execCalls)
+	}
+}
+
+func TestEvaluateExecSkippedWhenProbeFails(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Checks.Exec.Service = "superdufs"
+	cfg.Checks.Exec.Path = "/data"
+	fc := &fakeCompose{servicesFn: defaultServicesFn, psFn: runningContainersFn}
+	sp := &probeSpy{result: probe.Result{Error: "transport endpoint is not connected"}}
+	c := New(cfg, Deps{Mounts: mountsOK, Probe: sp.fn, Compose: fc})
+
+	r := c.Evaluate(context.Background())
+	if !r.HasMountFailure() {
+		t.Fatalf("Failures = %+v, want a probe failure", r.Failures)
+	}
+	if fc.execCalls != 0 {
+		t.Fatalf("exec calls = %d, want 0 when the probe fails", fc.execCalls)
+	}
+}
+
+func TestReportDockerUnavailable(t *testing.T) {
+	if (Report{Failures: []Failure{{"http", "status 500"}}}).DockerUnavailable() {
+		t.Fatalf("DockerUnavailable() = true without a docker failure")
+	}
+	r := Report{Failures: []Failure{{"mount", "not mounted"}, {"docker", "boom"}}}
+	if !r.DockerUnavailable() {
+		t.Fatalf("DockerUnavailable() = false with a docker failure")
 	}
 }
 

@@ -1,7 +1,8 @@
 # Example mount-manager configuration with explicit defaults for every key.
-# Install at /etc/mount-manager/config.yml and adjust paths for your host.
+# Install at /etc/mount-manager/config.yml (mode 0600: it may hold secrets) and adjust paths for your host.
+# An absent key takes its default; an explicit zero value (e.g. check_interval: 0s) is a config error.
 
-mount_path: /opt/rclone-stack/mymount # absolute path of the rclone FUSE mount point to supervise
+mount_path: /opt/rclone-stack/mymount # absolute path of the rclone FUSE mount point to supervise; no symlinks
 compose_file: /opt/rclone-stack/compose.yml # absolute path to the docker compose file for the stack
 project_directory: "" # compose project directory; empty defaults to the compose file's directory
 docker_binary: docker # name or path of the docker binary used to drive the compose stack
@@ -16,7 +17,7 @@ recovery:
   down_timeout: 30s # max time allowed to bring the compose stack down during recovery
   up_wait_timeout: 120s # max time to wait for the compose stack to come back up
   verify_timeout: 120s # max time to wait for the mount to verify healthy after recovery
-  command_grace: 60s # extra time added to the down/up/kill command timeouts before they are terminated
+  command_grace: 60s # extra time added to the down and up command timeouts before they are terminated; whole timeout of the kill fallback
   backoff_initial: 10s # initial backoff delay between recovery attempts
   backoff_max: 5m # maximum backoff delay between recovery attempts
 
@@ -27,7 +28,7 @@ checks:
     timeout: 5s # timeout for the HTTP health check request
     accept_status: [200, 401, 403] # HTTP status codes considered healthy
   exec:
-    service: superdufs # compose service name to exec into for the exec health check; empty disables it
+    service: superdufs # compose service whose running container runs the exec health check (docker exec); empty disables it
     path: /data # absolute path inside the exec service container to check for entries
     timeout: 10s # timeout for the exec health check command
 
