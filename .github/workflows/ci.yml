@@ -1,0 +1,128 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  STATICCHECK_VERSION: v0.8.2
+  GOVULNCHECK_VERSION: v1.9.0
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Go version
+        run: go version
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "files not gofmt-formatted:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags e2e ./test/e2e/
+
+      - name: staticcheck
+        run: |
+          go install "honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}"
+          staticcheck ./...
+          staticcheck -tags e2e ./test/e2e/
+
+      - name: govulncheck
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          govulncheck ./...
+
+      - name: Unit tests
+        run: go test -count=1 -race ./...
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build linux/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          version=$(git describe --tags --always)
+          out="dist/mount-manager-linux-${GOARCH}"
+          go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "$out" ./cmd/mount-manager
+          file "$out"
+          echo "built $out (version ${version})"
+
+      - name: Smoke test
+        if: matrix.goarch == 'amd64'
+        run: ./dist/mount-manager-linux-amd64 version
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mount-manager-linux-${{ matrix.goarch }}
+          path: dist/mount-manager-linux-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          chmod +x mount-manager-linux-*
+          sha256sum mount-manager-linux-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "mount-manager $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/mount-manager-linux-amd64 \
+            dist/mount-manager-linux-arm64 \
+            dist/SHA256SUMS
