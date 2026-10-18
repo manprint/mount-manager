@@ -11,7 +11,7 @@ Open before edits; checkpoint at a recovery boundary; close with evidence. A
 delegated worker follows its assigned OPEN unit. Missing design goes to agent-1:opus.
 
 ## Local design context
-Plan revision: 1.
+Plan revision: 2 (E5 precondition, see STATE §8).
 - D13/I-4: unit root, nessuna direttiva di namespacing filesystem. Vietate: `PrivateTmp`, `PrivateDevices`, `PrivateMounts`,
   `ProtectSystem`, `ProtectHome`, `ReadOnlyPaths`, `ReadWritePaths`, `InaccessiblePaths`, `BindPaths`, `BindReadOnlyPaths`,
   `TemporaryFileSystem`, `MountFlags`, `DynamicUser`, `RootDirectory`, `RootImage` (R5: disattivano la propagazione dei mount verso l'host).

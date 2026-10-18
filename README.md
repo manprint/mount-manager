@@ -25,7 +25,9 @@ Il supervisore (`internal/supervisor`) è una macchina a stati con un solo gorou
   suite di controlli torni tutta positiva; in caso di successo si torna a monitoring, altrimenti si
   entra in backoff.
 - **backoff** — attesa prima del prossimo tentativo di recovery, con durata calcolata dalla formula
-  sotto; scaduta l'attesa si ritenta la recovery.
+  sotto. Scaduta l'attesa la suite di controlli viene rieseguita: se è tutta positiva si torna in
+  monitoring (evento `recovery_succeeded`), se docker non risponde si resta in attesa, altrimenti si
+  ritenta la recovery.
 
 ### Stack "idle"
 
@@ -33,6 +35,16 @@ Lo stack è considerato **idle** quando zero container del progetto Compose sono
 `restarting` o `paused` — questo include sia lo stack mai avviato sia un `docker compose down`/`stop`
 manuale. Con stack idle il supervisore non esegue mai `down`/`up` (invariante I-1); in waiting o
 monitoring lo stato idle riporta (o mantiene) il supervisore in waiting.
+
+### Docker non raggiungibile
+
+Se `docker compose config`/`ps` falliscono (daemon fermo o in riavvio, CLI in timeout, `compose.yml`
+non valido), lo stato dello stack — idle o no — è sconosciuto e `down`/`up` non potrebbero comunque
+funzionare. In questo caso il supervisore **resta fermo**: in waiting azzera la `startup_grace`, in
+monitoring non conta il ciclo verso `failure_threshold`, in backoff non consuma tentativi; non avvia
+mai una recovery e non smonta il mount. L'inizio e la fine dell'indisponibilità sono loggati una sola
+volta (`docker unavailable, holding` / `docker available again`). Così, ad esempio, un
+`systemctl stop docker` di manutenzione con lo stack fermo apposta non porta a riavviare lo stack.
 
 ### Soglie e grace
 
@@ -55,8 +67,10 @@ Ad ogni tentativo di recovery (`internal/recovery.Recoverer.Recover`), in ordine
 5. **Verifica**: il supervisore entra in stato verifying e attende fino a `recovery.verify_timeout`
    che l'intera suite di controlli (C1-C5) torni positiva.
 
-Il cleanup del mount rifiuta di agire se il filesystem montato in cima a `mount_path` non ha
-`expected_fstype` (I-2): non smonta mai un mount estraneo.
+Il cleanup agisce solo sui mount con `expected_fstype` presenti a `mount_path` e non tocca mai un
+mount estraneo (I-2): se un filesystem diverso è montato *sopra* il mount FUSE rifiuta di agire; se un
+filesystem diverso sta solo *sotto* (ad esempio `mount_path` è a sua volta un bind mount reso
+`rshared`), una volta staccato il FUSE non c'è altro da pulire e la recovery prosegue.
 
 ### Formula di backoff (D8)
 
@@ -102,7 +116,7 @@ espliciti: [`deploy/config.example.yml`](deploy/config.example.yml).
 
 | Chiave | Tipo | Default | Significato |
 |--------|------|---------|-------------|
-| `mount_path` | stringa (path assoluto) | *(obbligatorio)* | Path host del mount FUSE da supervisionare. |
+| `mount_path` | stringa (path assoluto) | *(obbligatorio)* | Path host del mount FUSE da supervisionare. Non deve contenere symlink (`/proc/self/mountinfo` riporta il path risolto, quindi un path con symlink non corrisponderebbe mai). |
 | `compose_file` | stringa (path assoluto) | *(obbligatorio)* | Path del file `docker compose` dello stack. |
 | `project_directory` | stringa (path assoluto) | dir di `compose_file` | Directory di progetto passata a `docker compose --project-directory`. |
 | `docker_binary` | stringa | `docker` | Nome o path del binario docker usato per pilotare compose. |
@@ -115,14 +129,14 @@ espliciti: [`deploy/config.example.yml`](deploy/config.example.yml).
 | `recovery.down_timeout` | durata | `30s` | Timeout di `docker compose down -t` durante la recovery. |
 | `recovery.up_wait_timeout` | durata | `120s` | Timeout di `docker compose up --wait-timeout` durante la recovery. |
 | `recovery.verify_timeout` | durata | `120s` | Tempo massimo in stato verifying prima di considerare la recovery fallita. |
-| `recovery.command_grace` | durata | `60s` | Tempo extra aggiunto ai timeout dei comandi down/up/kill prima di forzarne la terminazione. |
+| `recovery.command_grace` | durata | `60s` | Tempo extra aggiunto ai timeout dei comandi `down` e `up` prima di forzarne la terminazione; è l'intero timeout del fallback `kill`. |
 | `recovery.backoff_initial` | durata | `10s` | Backoff iniziale tra tentativi di recovery. |
 | `recovery.backoff_max` | durata | `5m` | Backoff massimo tra tentativi di recovery. |
 | `checks.canary` | stringa (path relativo) | `""` | Nome file relativo dentro il mount che deve esistere; vuoto disabilita il controllo canary. |
 | `checks.http.url` | stringa (URL) | `""` | URL del check HTTP opzionale (C4); vuoto lo disabilita. |
 | `checks.http.timeout` | durata | `5s` | Timeout della richiesta HTTP del check. |
-| `checks.http.accept_status` | lista di interi | `[200, 401, 403]` | Codici di stato HTTP considerati sani (superdufs anonimo risponde 401, D17). |
-| `checks.exec.service` | stringa | `""` | Servizio compose in cui eseguire il check exec (C5); vuoto lo disabilita. |
+| `checks.http.accept_status` | lista di interi | `[200, 401, 403]` | Codici di stato HTTP considerati sani (superdufs anonimo risponde 401, D17); non può essere vuota se `checks.http.url` è impostato. |
+| `checks.exec.service` | stringa | `""` | Servizio compose del check exec (C5): `ls` viene eseguito con `docker exec` nel container in esecuzione del servizio (nome preso da `docker compose ps`); vuoto lo disabilita. |
 | `checks.exec.path` | stringa (path assoluto) | `/data` (se `checks.exec.service` è impostato) | Path assoluto dentro il container del servizio exec da controllare. |
 | `checks.exec.timeout` | durata | `10s` | Timeout del comando `exec` del check. |
 | `webhook.url` | stringa (URL) | `""` | URL che riceve le notifiche JSON; vuoto disabilita il webhook. |
@@ -132,6 +146,13 @@ espliciti: [`deploy/config.example.yml`](deploy/config.example.yml).
 Le durate sono stringhe accettate da `time.ParseDuration` (es. `10s`, `2m`, `1h`). Tutte le durate,
 `failure_threshold`, `log_level`, i path e gli URL sono validati al caricamento; gli errori vengono
 riportati tutti insieme, con prefisso `config: <campo>: <motivo>`.
+
+Una chiave assente prende il default; un valore scritto esplicitamente viene sempre preso così com'è.
+Quindi `check_interval: 0s` o `failure_threshold: 0` sono errori di configurazione, non un modo per
+ottenere il default (per usare il default basta omettere la chiave).
+
+Il file può contenere segreti (es. `webhook.headers` con un token): installarlo leggibile solo da root
+(`0600`).
 
 ## 5. Comandi
 
@@ -181,10 +202,10 @@ Eventi (`internal/notify`):
 | `stack_stopped` | quando, in monitoring, lo stack torna idle (si torna in waiting). |
 | `failure_detected` | quando scatta la recovery (soglia fallimenti in monitoring o grace scaduta in waiting). |
 | `recovery_started` | a ogni tentativo di recovery avviato. |
-| `recovery_succeeded` | quando, in verifying, la suite di controlli torna positiva. |
+| `recovery_succeeded` | quando, in verifying (o allo scadere del backoff), la suite di controlli torna positiva. |
 | `recovery_failed` | quando la recovery fallisce o il timeout di verifica scade. |
 | `stale_mount_cleaned` | quando viene ripulito un mount stale mentre lo stack è idle (D14). |
-| `shutdown` | alla terminazione del processo `run` (segnale ricevuto). |
+| `shutdown` | alla terminazione del processo `run` (segnale ricevuto). Se arriva durante una recovery (verifying o backoff), `detail` lo segnala e `attempt` riporta il tentativo: lo stack può essere rimasto fermo e un manager riavviato non lo rialza (vedi §9). |
 
 Esempio di payload:
 
@@ -195,9 +216,13 @@ Esempio di payload:
   "host": "storage01",
   "mount_path": "/opt/rclone-stack/mymount",
   "detail": "probe: probe timeout after 10s; http: context deadline exceeded",
-  "attempt": 2
+  "attempt": 1
 }
 ```
+
+Il primo tentativo porta in `detail` il riepilogo dei controlli falliti; i tentativi successivi, avviati
+allo scadere del backoff, hanno `detail` = `retry after backoff`. Negli errori dei comandi docker
+(`recovery_failed`) `detail` riporta la parte finale dello stderr, dove compose scrive l'errore vero.
 
 Campi: `event` (stringa, uno dei nomi sopra), `timestamp` (RFC3339 nano), `host` (hostname del
 processo), `mount_path` (dalla configurazione), `detail` (testo libero, dipende dall'evento),
@@ -207,16 +232,30 @@ processo), `mount_path` (dalla configurazione), `detail` (testo libero, dipende 
 
 L'installazione è manuale; non esiste un installer automatico.
 
-1. Compila il binario:
+1. Ottieni il binario, scaricandolo da una
+   [release GitHub](https://github.com/manprint/mount-manager/releases) (`linux-amd64` o `linux-arm64`,
+   con `SHA256SUMS`):
    ```
-   go build -o bin/mount-manager ./cmd/mount-manager
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.0.0/mount-manager-linux-amd64
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.0.0/SHA256SUMS
+   sha256sum --ignore-missing -c SHA256SUMS
+   mv mount-manager-linux-amd64 bin/mount-manager
+   ```
+   oppure compilandolo (Go 1.27; con `GOTOOLCHAIN=auto` il comando `go` scarica da solo la toolchain
+   `go1.27.2` indicata in `go.mod`):
+   ```
+   go build -trimpath -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o bin/mount-manager ./cmd/mount-manager
    ```
 2. Installa il binario:
    ```
    sudo install -m 0755 bin/mount-manager /usr/local/bin/
    ```
-3. Crea la configurazione in `/etc/mount-manager/config.yml` (parti da
-   [`deploy/config.example.yml`](deploy/config.example.yml) e adatta i path allo host).
+3. Crea la configurazione in `/etc/mount-manager/config.yml`, leggibile solo da root, partendo da
+   [`deploy/config.example.yml`](deploy/config.example.yml) e adattando i path allo host:
+   ```
+   sudo install -d -m 0755 /etc/mount-manager
+   sudo install -m 0600 deploy/config.example.yml /etc/mount-manager/config.yml
+   ```
 4. Copia la unit in `/etc/systemd/system/`:
    ```
    sudo cp deploy/mount-manager.service /etc/systemd/system/
@@ -230,6 +269,9 @@ L'installazione è manuale; non esiste un installer automatico.
    ```
    journalctl -u mount-manager -f
    ```
+
+La unit usa `Restart=always` ma `RestartPreventExitStatus=3`: un errore di configurazione (exit 3) non
+viene riavviato in loop; il servizio resta `failed` finché la configurazione non viene corretta.
 
 **Avviso (I-4)**: la unit **non** deve includere alcuna direttiva di namespacing filesystem, perché
 il servizio deve girare nel mount namespace dell'host per poter smontare/riavviare il mount reale.
@@ -246,6 +288,11 @@ Test unitari (tutti i package, race detector attivo):
 ```
 go test -count=1 -race ./...
 ```
+
+La CI GitHub (`.github/workflows/ci.yml`) esegue a ogni push e pull request `gofmt`, `go vet`,
+`staticcheck`, `govulncheck`, i test unitari con `-race` e la build `linux/amd64` + `linux/arm64`;
+a ogni tag `v*` pubblica una release con i binari e `SHA256SUMS`. Gli e2e richiedono docker, FUSE e
+root e si eseguono solo in locale.
 
 Test e2e non-root (scenari E1 "attesa→monitoraggio" ed E2 "down manuale senza recovery"), che avviano
 davvero `mount-manager run` e il compose stack reale (`rclone-mount` + `superdufs`):
@@ -298,8 +345,15 @@ montata.
   vengono scaricate manualmente.
 - **`down` manuale durante backoff/verifying viene ripristinato**: in verifying lo stato idle viene
   ignorato (allo scadere di `recovery.verify_timeout` si passa in backoff) e in backoff il tentativo
-  successivo di recovery esegue comunque `down`/`up`; uno stack fermato a mano in queste fasi viene
-  quindi riavviato. Per fermare davvero lo stack, fermare prima il servizio `mount-manager`.
+  successivo di recovery esegue comunque `down`/`up` (salvo docker non raggiungibile, vedi §2); uno
+  stack fermato a mano in queste fasi viene quindi riavviato. Per fermare davvero lo stack, fermare
+  prima il servizio `mount-manager`.
+- **Lo stato della recovery non sopravvive al riavvio del manager**: nessuno stato viene salvato su
+  disco (scelta voluta, per non avere marker spuri che riavvino uno stack fermato apposta). Se il
+  manager viene fermato durante una recovery dopo un `down` riuscito e un `up` fallito, lo stack resta
+  fermo; al riavvio il manager lo vede idle e, per I-1, non lo rialza. L'evento `shutdown` lo segnala
+  (`detail` "signal received during recovery …"); in quel caso avviare lo stack a mano
+  (`docker compose up -d`).
 - **Upload pendenti nella cache VFS persi al down/up**: i dati non ancora caricati nella cache VFS di
   rclone (`--vfs-cache-mode=full`, `--cache-dir=/tmp/rclone` nel container, non montata come volume)
   vengono persi quando la recovery esegue `down`/`up`, perché il container viene ricreato. È una

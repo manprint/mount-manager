@@ -11,11 +11,11 @@ are not recomputed as findings are fixed; current unresolved findings are below.
 ## Findings
 | ID | Severity | Title | Current status | Closed by / date | Evidence |
 |----|----------|-------|----------------|------------------|----------|
-| V001-F1 | MINOR | Context-cancel test asserts "no down" with `&&` | OPEN | C1 | recovery_test.go:277 |
-| V001-F2 | MINOR | TestParseMalformed misses separator branch; escapes partially tested | OPEN | C1 | mountinfo_test.go:71-82 |
-| V001-F3 | MINOR | Contract behaviors without unit tests | OPEN | C1 | report §F3 list |
-| V001-F4 | MINOR | README / example config inaccuracies | OPEN | C2 | README §6 payload, command_grace |
-| V001-F5 | MINOR | Stale state/plan metadata | OPEN (STATE row fixed at audit closure; phase_04 header pending C2) | C2 | STATE §7 row; phase_04.md:14 |
+| V001-F1 | MINOR | Context-cancel test asserts "no down" with `&&` | FIXED | C1 / 2026-10-18 | `TestRecoverContextCanceled` now uses `\|\|` and also rejects kill/detach |
+| V001-F2 | MINOR | TestParseMalformed misses separator branch; escapes partially tested | FIXED | C1 / 2026-10-18 | `TestParseMalformed` (separator), `TestParseTooFewFields`, `TestParseBasic` 3 lines, `TestUnescapeAll` |
+| V001-F3 | MINOR | Contract behaviors without unit tests | FIXED | C1 / 2026-10-18 | `TestCleanupAbortErrorContinues`, `TestCleanupDetachErrorReturned`, `TestEventFields`, `TestValidateErrors` (+11 cases), `TestExecPathDefault`, `TestLogLevelValue`, `TestRunErrorTruncatesStderr`, `TestEvaluateExecSkippedWhenProbeFails`, `TestKillAndReapAbandonsStuckProcess`; `go test -race ./...` green |
+| V001-F4 | MINOR | README / example config inaccuracies | FIXED | C2 / 2026-10-18 | README §6 payload `attempt: 1` + retry detail sentence; §4 and config.example.yml command_grace wording |
+| V001-F5 | MINOR | Stale state/plan metadata | FIXED | C2 / 2026-10-18 | phase_04.md header "Plan revision: 2"; STATE row fixed at audit closure |
 
 Statuses: OPEN, FIXED, ACCEPTED (user decision), OBSOLETE (reason recorded).
 Never silently remove a finding. Update the source report's resolution too.
