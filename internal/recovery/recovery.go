@@ -51,6 +51,9 @@ func New(cfg *config.Config, d Deps) *Recoverer {
 // mount_path is itself a bind mount), there is nothing left to clean.
 func (r *Recoverer) CleanupMount(ctx context.Context, abort bool) error {
 	for i := 0; i < maxDetach; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entries, err := r.d.Mounts()
 		if err != nil {
 			return fmt.Errorf("read mountinfo: %w", err)
@@ -109,6 +112,10 @@ func (r *Recoverer) Recover(ctx context.Context, attempt int, abortFirst bool) e
 	}
 	r.d.Log.Info("recovery: compose down", "attempt", attempt)
 	if err := r.d.Compose.Down(ctx, r.cfg.Recovery.DownTimeout.Duration); err != nil {
+		// Shutdown killed the down: a kill fallback would fail the same way.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		r.d.Log.Warn("compose down failed, falling back to kill", "attempt", attempt, "error", err)
 		if err := r.d.Compose.Kill(ctx); err != nil {
 			r.d.Log.Warn("compose kill failed", "attempt", attempt, "error", err)

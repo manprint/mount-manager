@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,10 +43,17 @@ func newWebhook(url string, headers map[string]string, timeout time.Duration, lo
 	w := &Webhook{
 		url:     url,
 		headers: headers,
-		client:  &http.Client{Timeout: timeout},
-		queue:   make(chan Event, capacity),
-		log:     log,
-		done:    make(chan struct{}),
+		client: &http.Client{
+			Timeout: timeout,
+			// A redirected POST becomes a GET and the event would be lost
+			// silently: report the 3xx instead.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		queue: make(chan Event, capacity),
+		log:   log,
+		done:  make(chan struct{}),
 	}
 	go func() {
 		for ev := range w.queue {
@@ -64,7 +74,7 @@ func (w *Webhook) send(ev Event) {
 	}
 	req, err := http.NewRequest(http.MethodPost, w.url, bytes.NewReader(body))
 	if err != nil {
-		w.log.Warn("webhook delivery failed", "event", ev.Event, "error", err)
+		w.log.Warn("webhook delivery failed", "event", ev.Event, "error", RedactURL(err))
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -73,7 +83,7 @@ func (w *Webhook) send(ev Event) {
 	}
 	resp, err := w.client.Do(req)
 	if err != nil {
-		w.log.Warn("webhook delivery failed", "event", ev.Event, "error", err)
+		w.log.Warn("webhook delivery failed", "event", ev.Event, "error", RedactURL(err))
 		return
 	}
 	defer func() {
@@ -121,4 +131,14 @@ func (w *Webhook) Close(ctx context.Context) {
 // Dropped returns the number of events dropped because the queue was full.
 func (w *Webhook) Dropped() int64 {
 	return w.dropped.Load()
+}
+
+// RedactURL drops the URL from a *url.Error, keeping the operation and the
+// cause: webhook URLs often carry their secret in the path or query.
+func RedactURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
+	return err
 }

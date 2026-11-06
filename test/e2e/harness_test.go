@@ -234,8 +234,10 @@ func writeManagerConfig(e *env, overrides func(*map[string]any)) {
 		"check_interval":    "1s",
 		"check_timeout":     "3s",
 		"failure_threshold": 2,
-		"startup_grace":     "5s",
-		"log_level":         "debug",
+		// Above the time rclone-mount needs to turn healthy under load: a
+		// shorter grace starts a recovery that races the test's own `up --wait`.
+		"startup_grace": "15s",
+		"log_level":     "debug",
 		"recovery": map[string]any{
 			"down_timeout":    "10s",
 			"up_wait_timeout": "90s",

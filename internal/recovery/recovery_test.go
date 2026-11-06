@@ -59,10 +59,14 @@ type fakeCompose struct {
 	downCall int
 	killErr  error
 	upErr    error
+	onDown   func()
 }
 
 func (c *fakeCompose) Down(ctx context.Context, stop time.Duration) error {
 	*c.seq = append(*c.seq, fmt.Sprintf("down %ds", int(stop.Seconds())))
+	if c.onDown != nil {
+		c.onDown()
+	}
 	var err error
 	if c.downCall < len(c.downErrs) {
 		err = c.downErrs[c.downCall]
@@ -346,6 +350,20 @@ func TestRecoverContextCanceled(t *testing.T) {
 	}
 }
 
+func TestRecoverShutdownDuringDownSkipsKillFallback(t *testing.T) {
+	h := newHarness([][]mountinfo.Entry{{}})
+	ctx, cancel := context.WithCancel(context.Background())
+	h.compose.onDown = cancel
+	h.compose.downErrs = []error{errors.New("signal: killed")}
+	err := h.rec.Recover(ctx, 1, false)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if countOf(h.seq, "kill") != 0 || countOf(h.seq, "down 0s") != 0 || countOf(h.seq, "up 120s") != 0 {
+		t.Errorf("expected no kill/down 0s/up after a canceled down, seq=%v", h.seq)
+	}
+}
+
 // filterSeq returns the elements of seq that are also in want, preserving
 // seq's order (duplicates in want are matched positionally as they occur).
 func filterSeq(seq, want []string) []string {
@@ -372,4 +390,17 @@ func equalSeq(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestCleanupMountHonorsCanceledContext(t *testing.T) {
+	h := newHarness([][]mountinfo.Entry{{fuseEntry}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := h.rec.CleanupMount(ctx, true)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if countOf(h.seq, "detach") != 0 || indexOf(h.seq, "abort 58") != -1 {
+		t.Fatalf("seq = %v, want no abort/detach after cancel", h.seq)
+	}
 }

@@ -3,7 +3,11 @@ package compose
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -279,4 +283,44 @@ func TestExecRunnerTimeout(t *testing.T) {
 	if elapsed >= 3*time.Second {
 		t.Errorf("elapsed = %v, want < 3s", elapsed)
 	}
+}
+
+// TestExecRunnerTimeoutKillsProcessGroup checks that a child left behind by
+// a timed-out command (like the compose plugin spawned by the docker CLI)
+// does not survive it and overlap the next compose command.
+func TestExecRunnerTimeoutKillsProcessGroup(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	var r ExecRunner
+	_, _, err := r.Run(context.Background(), 300*time.Millisecond, "sh", "-c",
+		`sleep 30 >/dev/null 2>&1 & echo $! > `+pidFile+`; wait`)
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("err = %v, want timeout error", err)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read child pid: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse child pid %q: %v", data, err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for processAlive(pid) {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatalf("child %d still running after the command timed out", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// processAlive reports whether pid exists and is not a zombie.
+func processAlive(pid int) bool {
+	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	i := strings.LastIndexByte(s, ')')
+	return i < 0 || i+2 >= len(s) || s[i+2] != 'Z'
 }

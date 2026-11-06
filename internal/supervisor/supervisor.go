@@ -91,6 +91,7 @@ type Supervisor struct {
 	backoffUntil   time.Time
 	dockerDown     bool
 	idleLogged     bool
+	cleanupErrMsg  string
 }
 
 // New builds a Supervisor from o.
@@ -137,6 +138,9 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 			return s.backoffUntil.Sub(now)
 		}
 		r := s.o.Health.Evaluate(ctx)
+		if ctx.Err() != nil {
+			return s.cfg.CheckInterval.Duration
+		}
 		switch {
 		case s.dockerUnavailable(r):
 			return s.cfg.CheckInterval.Duration
@@ -147,6 +151,12 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 	}
 
 	r := s.o.Health.Evaluate(ctx)
+
+	// A shutdown during Evaluate makes the report false (canceled probe or
+	// HTTP request): act on nothing, Run is about to return.
+	if ctx.Err() != nil {
+		return s.cfg.CheckInterval.Duration
+	}
 
 	// Without docker the stack state (idle or not) is unknown and down/up
 	// cannot run, so hold: no grace, no failure count, no recovery.
@@ -164,11 +174,7 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 			}
 			s.graceStart = time.Time{}
 			if r.MountStale {
-				if err := s.o.Recovery.CleanupMount(ctx, true); err == nil {
-					s.emit(notify.EventStaleMountCleaned, "stale mount detached", 0)
-				} else {
-					s.o.Log.Error("stale mount cleanup failed", "error", err)
-				}
+				s.cleanStaleMount(ctx)
 			}
 			return s.cfg.CheckInterval.Duration
 		}
@@ -224,6 +230,22 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 	return s.cfg.CheckInterval.Duration
 }
 
+// cleanStaleMount detaches a stale mount while the stack is idle. It is
+// retried on every check, so a failure is logged only when it differs from
+// the previous one.
+func (s *Supervisor) cleanStaleMount(ctx context.Context) {
+	err := s.o.Recovery.CleanupMount(ctx, true)
+	if err == nil {
+		s.cleanupErrMsg = ""
+		s.emit(notify.EventStaleMountCleaned, "stale mount detached", 0)
+		return
+	}
+	if msg := err.Error(); msg != s.cleanupErrMsg {
+		s.cleanupErrMsg = msg
+		s.o.Log.Error("stale mount cleanup failed (retried every check, logged again only if the error changes)", "error", err)
+	}
+}
+
 // dockerUnavailable reports whether r could not inspect the compose
 // project, logging only when that condition starts and ends.
 func (s *Supervisor) dockerUnavailable(r health.Report) bool {
@@ -254,6 +276,13 @@ func (s *Supervisor) runRecovery(ctx context.Context, abortFirst bool, reason st
 	s.attempt++
 	s.emit(notify.EventRecoveryStarted, reason, s.attempt)
 	err := s.o.Recovery.Recover(ctx, s.attempt, abortFirst)
+	if err != nil && ctx.Err() != nil {
+		// Interrupted by shutdown, not a recovery failure: Run reports the
+		// attempt in the shutdown event.
+		s.state = StateBackoff
+		s.backoffUntil = s.o.Clock.Now()
+		return 0
+	}
 	if err != nil {
 		s.emit(notify.EventRecoveryFailed, err.Error(), s.attempt)
 		return s.enterBackoff()

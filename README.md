@@ -46,12 +46,21 @@ mai una recovery e non smonta il mount. L'inizio e la fine dell'indisponibilità
 volta (`docker unavailable, holding` / `docker available again`). Così, ad esempio, un
 `systemctl stop docker` di manutenzione con lo stack fermo apposta non porta a riavviare lo stack.
 
+### Shutdown
+
+Un `SIGINT`/`SIGTERM` ricevuto mentre è in corso un controllo non produce azioni: il report di quel
+ciclo (probe e richiesta HTTP annullati) viene scartato, quindi nessun conteggio di fallimento, nessun
+cleanup del mount e nessuna recovery. Una recovery interrotta dal segnale non emette `recovery_failed`
+e non tenta il fallback `kill` dopo un `down` interrotto: è l'evento `shutdown` a riportarla (vedi §6).
+
 ### Soglie e grace
 
 - `failure_threshold` (default 3): numero di cicli consecutivi con controllo fallito, in monitoring,
   prima di avviare la recovery.
 - `startup_grace` (default 120s): tempo massimo, in waiting, che uno stack avviato ma non sano può
-  restare tale prima che scatti la recovery.
+  restare tale prima che scatti la recovery. Deve superare il tempo che `rclone-mount` impiega a
+  diventare healthy (healthcheck `start_period: 60s` in `compose.yml`): con un valore più basso la
+  recovery (`compose down`) può partire mentre è ancora in corso un `docker compose up --wait` manuale.
 
 ### Sequenza di recovery (D6)
 
@@ -67,8 +76,14 @@ Ad ogni tentativo di recovery (`internal/recovery.Recoverer.Recover`), in ordine
 5. **Verifica**: il supervisore entra in stato verifying e attende fino a `recovery.verify_timeout`
    che l'intera suite di controlli (C1-C5) torni positiva.
 
+Ogni comando docker gira in un proprio process group: allo scadere del timeout (o allo shutdown) riceve
+`SIGTERM` (dopo 5s `SIGKILL`) e poi l'intero gruppo viene ucciso, così nessun processo compose orfano
+(es. il plugin lanciato dal CLI `docker`) resta in esecuzione sovrapponendosi al tentativo successivo.
+
 Il cleanup agisce solo sui mount con `expected_fstype` presenti a `mount_path` e non tocca mai un
-mount estraneo (I-2): se un filesystem diverso è montato *sopra* il mount FUSE rifiuta di agire; se un
+mount estraneo (I-2). La cima dello stack di mount a `mount_path` è determinata dai parent ID di
+`/proc/self/mountinfo` (il mount che non è padre di un altro mount allo stesso path), non dall'ordine
+delle righe: se un filesystem diverso è montato *sopra* il mount FUSE rifiuta di agire; se un
 filesystem diverso sta solo *sotto* (ad esempio `mount_path` è a sua volta un bind mount reso
 `rshared`), una volta staccato il FUSE non c'è altro da pulire e la recovery prosegue.
 
@@ -87,7 +102,8 @@ backoff(n) = min(backoff_initial · 2^(n-1), backoff_max)
 In waiting, con stack idle, se il mount è presente in `/proc/self/mountinfo` ma il probe fallisce
 (mount "stale", tipicamente dopo un `docker kill` di `rclone-mount` senza fermare lo stack), il
 supervisore esegue il cleanup (abort + detach) senza avviare lo stack ed emette l'evento
-`stale_mount_cleaned`. Motivo: un bind di sorgente stale farebbe fallire il successivo `up` manuale.
+`stale_mount_cleaned`. Se il cleanup fallisce (es. manager non root) viene ritentato a ogni controllo, ma
+l'errore è loggato solo quando cambia. Motivo: un bind di sorgente stale farebbe fallire il successivo `up` manuale.
 
 ## 3. Bootstrap compose
 
@@ -126,13 +142,13 @@ espliciti: [`deploy/config.example.yml`](deploy/config.example.yml).
 | `failure_threshold` | intero | `3` | Cicli falliti consecutivi in monitoring prima della recovery. |
 | `startup_grace` | durata | `120s` | In waiting, tempo tollerato di stack avviato ma non sano prima della recovery. |
 | `log_level` | stringa | `info` | Uno tra `debug`, `info`, `warn`, `error`. |
-| `recovery.down_timeout` | durata | `30s` | Timeout di `docker compose down -t` durante la recovery. |
-| `recovery.up_wait_timeout` | durata | `120s` | Timeout di `docker compose up --wait-timeout` durante la recovery. |
+| `recovery.down_timeout` | durata (>= 1s) | `30s` | Timeout di `docker compose down -t` durante la recovery (compose usa secondi interi). |
+| `recovery.up_wait_timeout` | durata (>= 1s) | `120s` | Timeout di `docker compose up --wait-timeout` durante la recovery (compose usa secondi interi). |
 | `recovery.verify_timeout` | durata | `120s` | Tempo massimo in stato verifying prima di considerare la recovery fallita. |
 | `recovery.command_grace` | durata | `60s` | Tempo extra aggiunto ai timeout dei comandi `down` e `up` prima di forzarne la terminazione; è l'intero timeout del fallback `kill`. |
 | `recovery.backoff_initial` | durata | `10s` | Backoff iniziale tra tentativi di recovery. |
 | `recovery.backoff_max` | durata | `5m` | Backoff massimo tra tentativi di recovery. |
-| `checks.canary` | stringa (path relativo) | `""` | Nome file relativo dentro il mount che deve esistere; vuoto disabilita il controllo canary. |
+| `checks.canary` | stringa (path relativo) | `""` | Nome file relativo dentro il mount che deve esistere; vuoto disabilita il controllo canary. Non può uscire dal mount (`..` o prefisso `../`). |
 | `checks.http.url` | stringa (URL) | `""` | URL del check HTTP opzionale (C4); vuoto lo disabilita. |
 | `checks.http.timeout` | durata | `5s` | Timeout della richiesta HTTP del check. |
 | `checks.http.accept_status` | lista di interi | `[200, 401, 403]` | Codici di stato HTTP considerati sani (superdufs anonimo risponde 401, D17); non può essere vuota se `checks.http.url` è impostato. |
@@ -140,7 +156,7 @@ espliciti: [`deploy/config.example.yml`](deploy/config.example.yml).
 | `checks.exec.path` | stringa (path assoluto) | `/data` (se `checks.exec.service` è impostato) | Path assoluto dentro il container del servizio exec da controllare. |
 | `checks.exec.timeout` | durata | `10s` | Timeout del comando `exec` del check. |
 | `webhook.url` | stringa (URL) | `""` | URL che riceve le notifiche JSON; vuoto disabilita il webhook. |
-| `webhook.headers` | mappa stringa→stringa | `{}` | Header HTTP aggiuntivi inviati con ogni richiesta webhook. |
+| `webhook.headers` | mappa stringa→stringa | `{}` | Header HTTP aggiuntivi inviati con ogni richiesta webhook. Le chiavi devono essere nomi di header validi (token RFC 9110), i valori non possono contenere CR, LF o NUL. |
 | `webhook.timeout` | durata | `5s` | Timeout della richiesta HTTP del webhook. |
 
 Le durate sono stringhe accettate da `time.ParseDuration` (es. `10s`, `2m`, `1h`). Tutte le durate,
@@ -190,7 +206,10 @@ mount-manager version
 
 Se `webhook.url` non è vuoto, ogni evento del supervisore viene inviato in modo asincrono (coda 64,
 nessun retry; errori solo loggati) come richiesta HTTP POST con corpo JSON e gli header opzionali di
-`webhook.headers`.
+`webhook.headers`. I redirect non vengono seguiti (un POST rediretto diventerebbe GET e l'evento andrebbe
+perso): una risposta 3xx è loggata come consegna fallita. Gli errori loggati non riportano mai l'URL,
+che spesso contiene il segreto del webhook nel path o nella query (lo stesso vale per gli errori di
+validazione di `webhook.url` e `checks.http.url`).
 
 Eventi (`internal/notify`):
 
@@ -306,7 +325,14 @@ Precondizioni per gli e2e (non-root e root):
 - lo stack di produzione è fermo: nessun container `rclone-mount` o `superdufs` esistente (`docker ps -a`);
 - la porta `127.0.0.1:5000` è libera;
 - le immagini `rclone/rclone:latest` e `fabiop85/superdufs:v1.5.0` sono presenti (o scaricabili: il test le
-  scarica automaticamente se mancano).
+  scarica automaticamente se mancano);
+- la work dir `test/e2e/.work` sta su un mount con propagazione `shared` (il bind di `rclone-mount` usa
+  `rshared`; altrimenti docker risponde `... is mounted on ... but it is not a shared mount`). Se il
+  filesystem del repository è `private` (`findmnt -o TARGET,PROPAGATION -T test/e2e/.work`):
+  ```
+  mkdir -p test/e2e/.work && sudo mount --bind test/e2e/.work test/e2e/.work && sudo mount --make-rshared test/e2e/.work
+  ```
+  (per annullare: `sudo umount test/e2e/.work`).
 
 Test e2e come root (scenari privilegiati E3-E6, che uccidono/mettono in pausa container e verificano la
 recovery reale). Prima si compilano il binario e il pacchetto di test:

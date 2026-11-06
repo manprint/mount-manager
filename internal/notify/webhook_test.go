@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -230,4 +231,79 @@ func TestNopNotify(t *testing.T) {
 	var n Nop
 	// Should not panic.
 	n.Notify(Event{Event: EventShutdown})
+}
+
+// TestWebhookErrorDoesNotLogURL: webhook URLs often carry the secret in the
+// path (Slack, Discord, ...), so delivery errors must not log the URL.
+func TestWebhookErrorDoesNotLogURL(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL + "/hooks/SECRETTOKEN"
+	srv.Close() // connection refused from now on
+
+	var buf syncBuffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	w := newWebhook(url, nil, time.Second, log, 4)
+	w.Notify(Event{Event: EventStartup})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	w.Close(ctx)
+
+	out := buf.String()
+	if !strings.Contains(out, "webhook delivery failed") {
+		t.Fatalf("no delivery failure logged: %q", out)
+	}
+	if strings.Contains(out, "SECRETTOKEN") {
+		t.Fatalf("log leaks the webhook URL: %q", out)
+	}
+}
+
+// TestWebhookDoesNotFollowRedirects: a redirected POST would become a GET
+// and the event would be lost silently; the 3xx must be reported instead.
+func TestWebhookDoesNotFollowRedirects(t *testing.T) {
+	var gets int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/old" {
+			http.Redirect(w, r, "/new", http.StatusFound)
+			return
+		}
+		mu.Lock()
+		gets++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var buf syncBuffer
+	w := newWebhook(srv.URL+"/old", nil, time.Second, slog.New(slog.NewTextHandler(&buf, nil)), 4)
+	w.Notify(Event{Event: EventStartup})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	w.Close(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gets != 0 {
+		t.Fatalf("redirect followed (%d requests to /new)", gets)
+	}
+	if !strings.Contains(buf.String(), "status=302") {
+		t.Fatalf("302 not reported: %q", buf.String())
+	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

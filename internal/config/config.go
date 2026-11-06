@@ -230,6 +230,20 @@ func (c *Config) Validate() error {
 	checkDur("checks.exec.timeout", c.Checks.Exec.Timeout)
 	checkDur("webhook.timeout", c.Webhook.Timeout)
 
+	// docker compose takes these as whole seconds: below 1s they would be
+	// passed as 0 (down -t 0 kills at once; --wait-timeout 0 never times out).
+	for _, d := range []struct {
+		field string
+		v     Duration
+	}{
+		{"recovery.down_timeout", c.Recovery.DownTimeout},
+		{"recovery.up_wait_timeout", c.Recovery.UpWaitTimeout},
+	} {
+		if d.v.Duration > 0 && d.v.Duration < time.Second {
+			addf(d.field, "must be >= 1s")
+		}
+	}
+
 	if c.FailureThreshold < 1 {
 		addf("failure_threshold", "must be >= 1")
 	}
@@ -253,7 +267,7 @@ func (c *Config) Validate() error {
 			addf("checks.canary", "must be clean")
 		case cv == ".":
 			addf("checks.canary", "must not be .")
-		case strings.HasPrefix(cv, ".."):
+		case cv == ".." || strings.HasPrefix(cv, "../"):
 			addf("checks.canary", "must not escape with ..")
 		}
 	}
@@ -264,6 +278,11 @@ func (c *Config) Validate() error {
 		}
 		u, err := url.Parse(raw)
 		if err != nil {
+			// The URL may carry a secret: report the cause only.
+			var ue *url.Error
+			if errors.As(err, &ue) {
+				err = ue.Err
+			}
 			addf(field, "invalid url: "+err.Error())
 			return
 		}
@@ -291,13 +310,32 @@ func (c *Config) Validate() error {
 		addf("checks.exec.path", "must be an absolute POSIX path")
 	}
 
-	for k := range c.Webhook.Headers {
-		if k == "" {
+	for k, v := range c.Webhook.Headers {
+		switch {
+		case k == "":
 			addf("webhook.headers", "keys must not be empty")
+		case !isToken(k):
+			addf("webhook.headers", fmt.Sprintf("key %q is not a valid header name", k))
+		case strings.ContainsAny(v, "\r\n\x00"):
+			addf("webhook.headers", fmt.Sprintf("value of %q must not contain CR, LF or NUL", k))
 		}
 	}
 
 	return errors.Join(errs...)
+}
+
+// isToken reports whether s is a valid HTTP header name (RFC 9110 token).
+func isToken(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0:
+		default:
+			return false
+		}
+	}
+	return s != ""
 }
 
 // checkNoSymlink returns an error if p (absolute and clean) contains a

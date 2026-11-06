@@ -25,6 +25,9 @@ type Entry struct {
 func Parse(r io.Reader) ([]Entry, error) {
 	var entries []Entry
 	scanner := bufio.NewScanner(r)
+	// Super options can be long (e.g. overlay lowerdir lists): a line over
+	// the default 64KiB token limit must not fail the whole read.
+	scanner.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -114,15 +117,38 @@ func Read() ([]Entry, error) {
 	return Parse(f)
 }
 
-// Top returns the last entry (most recently stacked mount) whose MountPoint
-// equals path.
+// Top returns the topmost mount stacked at path: the entry at path that is
+// not the parent of another entry at path. List order is not stacking order
+// (a mount can be moved on top of a newer one, or mounted beneath an older
+// one), so the parent links decide. When they do not single one out, the
+// last such entry in the list is returned.
 func Top(entries []Entry, path string) (Entry, bool) {
+	parents := make(map[int]bool)
+	found := false
+	for _, e := range entries {
+		if e.MountPoint == path {
+			found = true
+			if e.ParentID != e.MountID {
+				parents[e.ParentID] = true
+			}
+		}
+	}
+	if !found {
+		return Entry{}, false
+	}
+	last := -1
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].MountPoint == path {
+		if entries[i].MountPoint != path {
+			continue
+		}
+		if last < 0 {
+			last = i
+		}
+		if !parents[entries[i].MountID] {
 			return entries[i], true
 		}
 	}
-	return Entry{}, false
+	return entries[last], true
 }
 
 // Unescape decodes the octal escapes used by mountinfo for mount points and

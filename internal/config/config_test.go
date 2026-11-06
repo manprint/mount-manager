@@ -336,6 +336,12 @@ func TestValidateErrors(t *testing.T) {
 		{"compose_file not regular", func(c *Config) { c.ComposeFile = c.ProjectDirectory }, "compose_file"},
 		{"http url empty host", func(c *Config) { c.Checks.HTTP.URL = "http://" }, "checks.http.url"},
 		{"accept_status 600", func(c *Config) { c.Checks.HTTP.AcceptStatus = []int{600} }, "checks.http.accept_status"},
+		{"canary only dotdot", func(c *Config) { c.Checks.Canary = ".." }, "checks.canary"},
+		{"webhook header name not a token", func(c *Config) { c.Webhook.Headers = map[string]string{"X Token": "v"} }, "webhook.headers"},
+		{"webhook header name with colon", func(c *Config) { c.Webhook.Headers = map[string]string{"X-A:": "v"} }, "webhook.headers"},
+		{"webhook header value with CRLF", func(c *Config) { c.Webhook.Headers = map[string]string{"X-A": "v\r\nX-B: w"} }, "webhook.headers"},
+		{"down_timeout below 1s", func(c *Config) { c.Recovery.DownTimeout = Duration{400 * time.Millisecond} }, "recovery.down_timeout: must be >= 1s"},
+		{"up_wait_timeout below 1s", func(c *Config) { c.Recovery.UpWaitTimeout = Duration{999 * time.Millisecond} }, "recovery.up_wait_timeout: must be >= 1s"},
 		{"accept_status empty with url", func(c *Config) {
 			c.Checks.HTTP.URL = "http://127.0.0.1:5000/"
 			c.Checks.HTTP.AcceptStatus = nil
@@ -511,5 +517,35 @@ func TestMountPathSymlinkRejected(t *testing.T) {
 				t.Fatalf("Validate: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateAcceptsCanaryStartingWithDots(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Checks.Canary = "..marker"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateAcceptsValidWebhookHeaders(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Webhook.Headers = map[string]string{"Authorization": "Bearer abc.def", "X-Api_Key!": "v\twith tab"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// TestValidateURLErrorHidesURL: a URL can carry a secret (token in the path
+// or query); a parse error must not echo it to stderr or the journal.
+func TestValidateURLErrorHidesURL(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Webhook.URL = "https://hooks.example.com/SECRETTOKEN\x7f"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "webhook.url") {
+		t.Fatalf("err = %v, want webhook.url error", err)
+	}
+	if strings.Contains(err.Error(), "SECRETTOKEN") {
+		t.Fatalf("error leaks the URL: %v", err)
 	}
 }

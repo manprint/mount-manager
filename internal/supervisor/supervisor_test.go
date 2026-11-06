@@ -863,3 +863,167 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 		t.Fatalf("last event = %v, want shutdown", events)
 	}
 }
+
+// cancelingHealth returns report after canceling ctx, as when a signal
+// arrives while Evaluate is running: probes report "probe canceled" and the
+// HTTP check errors, so the report is false.
+type cancelingHealth struct {
+	report health.Report
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (h *cancelingHealth) Evaluate(ctx context.Context) health.Report {
+	h.calls++
+	h.cancel()
+	return h.report
+}
+
+func TestCanceledEvaluateTakesNoAction(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(sup *Supervisor, clk *fakeClock)
+		rep   health.Report
+	}{
+		{"waiting idle stale", func(*Supervisor, *fakeClock) {}, staleReport()},
+		{"waiting grace expired", func(sup *Supervisor, clk *fakeClock) {
+			sup.graceStart = baseTime.Add(-time.Hour)
+		}, probeFailReport()},
+		{"monitoring at threshold", func(sup *Supervisor, clk *fakeClock) {
+			sup.state = Monitoring
+			sup.failCount = 2
+		}, probeFailReport()},
+		{"verifying deadline passed", func(sup *Supervisor, clk *fakeClock) {
+			sup.state = Verifying
+			sup.attempt = 1
+			sup.verifyDeadline = baseTime.Add(-time.Second)
+		}, probeFailReport()},
+		{"backoff expired", func(sup *Supervisor, clk *fakeClock) {
+			sup.state = StateBackoff
+			sup.attempt = 1
+			sup.backoffUntil = baseTime.Add(-time.Second)
+		}, probeFailReport()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clk := &fakeClock{now: baseTime}
+			n := &recNotifier{}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			h := &cancelingHealth{report: tc.rep, cancel: cancel}
+			rec := &fakeRecovery{}
+			sup := newSup(testConfig(), h, rec, clk, n)
+			sup.Start()
+			tc.setup(sup, clk)
+			before := sup.State()
+
+			sup.Step(ctx)
+
+			if h.calls != 1 {
+				t.Fatalf("Evaluate calls = %d, want 1", h.calls)
+			}
+			if len(rec.calls) != 0 || len(rec.cleanupCalls) != 0 {
+				t.Fatalf("Recover calls = %v, CleanupMount calls = %v, want none", rec.calls, rec.cleanupCalls)
+			}
+			if got := eventNames(n.all()); !sliceEq(got, []string{"startup", "waiting"}) {
+				t.Fatalf("events = %v, want only startup+waiting", got)
+			}
+			if sup.State() != before {
+				t.Fatalf("state = %v, want unchanged %v", sup.State(), before)
+			}
+		})
+	}
+}
+
+// cancelingRecovery cancels ctx during Recover and returns the context error,
+// as when a signal interrupts the compose commands.
+type cancelingRecovery struct {
+	fakeRecovery
+	cancel context.CancelFunc
+}
+
+func (r *cancelingRecovery) Recover(ctx context.Context, attempt int, abortFirst bool) error {
+	r.fakeRecovery.calls = append(r.fakeRecovery.calls, recoverCall{attempt, abortFirst})
+	r.cancel()
+	return ctx.Err()
+}
+
+func TestRecoveryInterruptedByShutdownIsNotAFailure(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &fakeHealth{reports: []health.Report{probeFailReport()}}
+	rec := &cancelingRecovery{cancel: cancel}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	sup.state = Monitoring
+	sup.failCount = 2
+
+	sup.Step(ctx)
+
+	got := eventNames(n.all())
+	want := []string{"startup", "waiting", "failure_detected", "recovery_started"}
+	if !sliceEq(got, want) {
+		t.Fatalf("events = %v, want %v (no recovery_failed on shutdown)", got, want)
+	}
+	if sup.State() != StateBackoff {
+		t.Fatalf("state = %v, want backoff (recovery interrupted)", sup.State())
+	}
+}
+
+// lockedBuffer is an io.Writer safe for the slog handler.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) count(s string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.b.String(), s)
+}
+
+func TestStaleCleanupErrorLoggedOnChangeOnly(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{staleReport()}}
+	rec := &fakeRecovery{cleanupErr: errFake("permission denied")}
+	logs := &lockedBuffer{}
+	sup := New(Options{
+		Config: testConfig(), Health: h, Recovery: rec, Notifier: n, Clock: clk,
+		Log:  slog.New(slog.NewTextHandler(logs, nil)),
+		Host: "host1", Version: "1.0.0",
+	})
+	sup.Start()
+
+	for i := 0; i < 5; i++ {
+		sup.Step(context.Background())
+	}
+	if len(rec.cleanupCalls) != 5 {
+		t.Fatalf("CleanupMount calls = %d, want 5 (retried every check)", len(rec.cleanupCalls))
+	}
+	if c := logs.count("stale mount cleanup failed"); c != 1 {
+		t.Fatalf("error logged %d times, want 1", c)
+	}
+
+	rec.cleanupErr = errFake("other error")
+	sup.Step(context.Background())
+	if c := logs.count("stale mount cleanup failed"); c != 2 {
+		t.Fatalf("error logged %d times after the error changed, want 2", c)
+	}
+
+	rec.cleanupErr = nil
+	sup.Step(context.Background())
+	rec.cleanupErr = errFake("other error")
+	sup.Step(context.Background())
+	if c := logs.count("stale mount cleanup failed"); c != 3 {
+		t.Fatalf("error logged %d times after a success in between, want 3", c)
+	}
+}

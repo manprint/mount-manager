@@ -149,3 +149,32 @@ func TestReadSelf(t *testing.T) {
 		t.Error("Read: no entry with MountPoint \"/\"")
 	}
 }
+
+// TestTopFollowsMountTree covers mounts listed out of stacking order (e.g. a
+// mount moved on top of a newer one, or MOVE_MOUNT_BENEATH): the top is the
+// mount at path that is not the parent of another mount at the same path.
+func TestTopFollowsMountTree(t *testing.T) {
+	entries := []Entry{
+		{MountID: 1, ParentID: 0, MountPoint: "/"},
+		{MountID: 15, ParentID: 20, MountPoint: "/mnt/mount", FSType: "ext4"},
+		{MountID: 20, ParentID: 1, MountPoint: "/mnt/mount", FSType: "fuse.rclone"},
+		{MountID: 30, ParentID: 1, MountPoint: "/mnt/other"},
+	}
+	got, ok := Top(entries, "/mnt/mount")
+	if !ok || got.MountID != 15 {
+		t.Fatalf("Top = %+v, %v; want MountID 15 (stacked on 20)", got, ok)
+	}
+}
+
+func TestParseLongLine(t *testing.T) {
+	long := strings.Repeat("o", 100<<10)
+	data := "36 35 0:31 / /mnt/mount rw - overlay overlay rw," + long + "\n" +
+		"37 36 0:32 / /mnt/x rw - tmpfs tmpfs rw\n"
+	entries, err := Parse(strings.NewReader(data))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(entries) != 2 || entries[1].MountPoint != "/mnt/x" {
+		t.Fatalf("entries = %d, want 2 with /mnt/x last", len(entries))
+	}
+}
