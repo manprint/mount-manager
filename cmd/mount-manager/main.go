@@ -178,7 +178,7 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 }
 
 // runRun implements the "run" subcommand: it loads the configuration and
-// runs the supervisor loop until SIGINT or SIGTERM is received.
+// runs the supervisor loop until SIGINT, SIGTERM or SIGHUP is received.
 func runRun(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -202,6 +202,9 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 
 	if os.Geteuid() != 0 {
 		log.Warn("not running as root: unmount and fuse abort will fail")
+	}
+	for _, w := range filePermWarnings(*cfgPath, cfg) {
+		log.Warn(w)
 	}
 
 	deps := buildDeps(cfg)
@@ -239,7 +242,7 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 		Version:  version,
 	})
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	defer stop()
 
 	_ = sup.Run(ctx)
@@ -251,4 +254,38 @@ func runRun(args []string, stdout, stderr io.Writer) int {
 	}
 
 	return 0
+}
+
+// shutdownSignals returns the signals that stop "run" gracefully. SIGHUP is
+// left out when it is ignored at startup (nohup): signal.Notify would
+// otherwise turn a hangup that is meant to be ignored into a shutdown.
+func shutdownSignals() []os.Signal {
+	sigs := []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) {
+		sigs = append(sigs, syscall.SIGHUP)
+	}
+	return sigs
+}
+
+// filePermWarnings reports permissions that let other users change what
+// mount-manager (normally root) runs, or read webhook settings that may
+// carry secrets. Only the config and compose files are checked.
+func filePermWarnings(cfgPath string, cfg *config.Config) []string {
+	var warns []string
+	check := func(label, p string, secret bool) {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return
+		}
+		mode := fi.Mode().Perm()
+		if mode&0o022 != 0 {
+			warns = append(warns, fmt.Sprintf("%s %s is writable by group or others (mode %04o): whoever can write it controls what mount-manager runs", label, p, mode))
+		}
+		if secret && mode&0o004 != 0 {
+			warns = append(warns, fmt.Sprintf("%s %s is readable by others (mode %04o) and holds webhook settings that may carry secrets", label, p, mode))
+		}
+	}
+	check("config file", cfgPath, cfg.Webhook.URL != "" || len(cfg.Webhook.Headers) > 0)
+	check("compose file", cfg.ComposeFile, false)
+	return warns
 }

@@ -102,8 +102,8 @@ func newHarness(states [][]mountinfo.Entry) *testHarness {
 
 	d := Deps{
 		Mounts: h.mounts.mounts,
-		Abort: func(minor int) error {
-			h.seq = append(h.seq, fmt.Sprintf("abort %d", minor))
+		Abort: func(dev uint64) error {
+			h.seq = append(h.seq, fmt.Sprintf("abort %d", dev))
 			return h.abortErr
 		},
 		Detach: func(path string) error {

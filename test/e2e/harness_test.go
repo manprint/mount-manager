@@ -234,9 +234,10 @@ func writeManagerConfig(e *env, overrides func(*map[string]any)) {
 		"check_interval":    "1s",
 		"check_timeout":     "3s",
 		"failure_threshold": 2,
-		// Above the time rclone-mount needs to turn healthy under load: a
-		// shorter grace starts a recovery that races the test's own `up --wait`.
-		"startup_grace": "15s",
+		// Shorter than the time rclone-mount may need to turn healthy under
+		// load: E1 then checks that the grace is held while health=starting
+		// and no recovery races the test's own `up --wait`.
+		"startup_grace": "5s",
 		"log_level":     "debug",
 		"recovery": map[string]any{
 			"down_timeout":    "10s",
@@ -472,21 +473,30 @@ func runCheck(e *env) int {
 	return -1
 }
 
+// teardownCompose runs a compose command scoped to the test compose file
+// (the container names are the production ones on a shared daemon) and
+// logs its failure.
+func teardownCompose(e *env, timeout time.Duration, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	full := append([]string{"compose", "-f", e.composeFile, "--project-directory", e.work}, args...)
+	out, err := exec.CommandContext(ctx, "docker", full...).CombinedOutput()
+	if err != nil {
+		e.t.Logf("teardown: docker compose %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return err
+}
+
 // teardown stops the manager, tears down the compose stack, force-unmounts
 // any leftover mount, prints the manager log on failure and removes the
 // work directory. It is safe to call multiple times.
 func (e *env) teardown() {
 	stopManager(e)
 
+	downFailed := false
 	if e.composeFile != "" {
 		if _, err := os.Stat(e.composeFile); err == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			out, err := exec.CommandContext(ctx, "docker", "compose", "-f", e.composeFile,
-				"--project-directory", e.work, "down", "-t", "5").CombinedOutput()
-			cancel()
-			if err != nil {
-				e.t.Logf("teardown: docker compose down: %v\n%s", err, out)
-			}
+			downFailed = teardownCompose(e, 60*time.Second, "down", "-t", "5") != nil
 		}
 	}
 
@@ -512,6 +522,18 @@ func (e *env) teardown() {
 					e.t.Logf("teardown: fusermount3 -u -z %s: %v\n%s", e.mountPath, err, out)
 				}
 			}
+		}
+	}
+
+	// A failed down can leave a container half removed, which fails the next
+	// test's preflight: retry once the leftover mount is detached.
+	if downFailed {
+		_ = teardownCompose(e, 30*time.Second, "kill")
+		for i := 0; i < 3; i++ {
+			if teardownCompose(e, 60*time.Second, "down", "-t", "0") == nil {
+				break
+			}
+			time.Sleep(2 * time.Second)
 		}
 	}
 

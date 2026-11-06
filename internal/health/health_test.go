@@ -758,3 +758,36 @@ func TestReportSummary(t *testing.T) {
 		t.Fatalf("HasMountFailure() = false, want true")
 	}
 }
+
+func TestEvaluateStartingOnlyForRunningContainers(t *testing.T) {
+	cases := []struct {
+		state, health string
+		want          bool
+	}{
+		{"running", "starting", true},
+		{"paused", "starting", false},
+		{"running", "unhealthy", false},
+		{"running", "healthy", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.state+"/"+tc.health, func(t *testing.T) {
+			fc := &fakeCompose{
+				servicesFn: defaultServicesFn,
+				psFn: func(ctx context.Context) ([]compose.Container, error) {
+					return []compose.Container{
+						{Service: "rclone-mount", State: tc.state, Health: tc.health},
+						{Service: "superdufs", State: "created"},
+					}, nil
+				},
+			}
+			c := New(baseConfig(), Deps{Mounts: mountsMissing, Probe: (&probeSpy{}).fn, Compose: fc})
+			r := c.Evaluate(context.Background())
+			if r.Starting != tc.want {
+				t.Fatalf("Starting = %v, want %v (report %+v)", r.Starting, tc.want, r)
+			}
+			if r.OK {
+				t.Fatalf("OK = true, want false")
+			}
+		})
+	}
+}

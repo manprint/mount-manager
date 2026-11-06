@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -18,8 +17,8 @@ func TestAbortConnectionWritesFile(t *testing.T) {
 	ConnectionsDir = dir
 	defer func() { ConnectionsDir = orig }()
 
-	minor := 58
-	connDir := filepath.Join(dir, strconv.Itoa(minor))
+	dev := uint64(8<<20 | 1)
+	connDir := filepath.Join(dir, "8388609")
 	if err := os.MkdirAll(connDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -28,7 +27,7 @@ func TestAbortConnectionWritesFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if err := AbortConnection(minor); err != nil {
+	if err := AbortConnection(dev); err != nil {
 		t.Fatalf("AbortConnection: %v", err)
 	}
 

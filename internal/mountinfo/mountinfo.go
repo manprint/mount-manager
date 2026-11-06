@@ -20,6 +20,10 @@ type Entry struct {
 	SuperOptions      string
 }
 
+// Dev returns the kernel's internal device number of the mount
+// ((major << 20) | minor), which names its fusectl connection directory.
+func (e Entry) Dev() uint64 { return uint64(e.Major)<<20 | uint64(e.Minor) }
+
 // Parse reads mountinfo entries from r. A malformed line produces an error
 // of the form "mountinfo: line %d: %s".
 func Parse(r io.Reader) ([]Entry, error) {

@@ -17,10 +17,11 @@ import (
 // in tests.
 var ConnectionsDir = "/sys/fs/fuse/connections"
 
-// AbortConnection writes "1" to the abort file of the given FUSE connection
-// minor number. A missing connection (already gone) is not an error.
-func AbortConnection(minor int) error {
-	path := filepath.Join(ConnectionsDir, strconv.Itoa(minor), "abort")
+// AbortConnection writes "1" to the abort file of the FUSE connection of
+// device dev (see mountinfo.Entry.Dev). A missing connection (already gone)
+// is not an error.
+func AbortConnection(dev uint64) error {
+	path := filepath.Join(ConnectionsDir, strconv.FormatUint(dev, 10), "abort")
 	err := os.WriteFile(path, []byte("1"), 0)
 	if err == nil {
 		return nil
@@ -28,7 +29,7 @@ func AbortConnection(minor int) error {
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	return fmt.Errorf("abort fuse connection %d: %w", minor, err)
+	return fmt.Errorf("abort fuse connection %d: %w", dev, err)
 }
 
 // Detach performs a lazy unmount (MNT_DETACH) of path.

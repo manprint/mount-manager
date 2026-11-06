@@ -49,7 +49,11 @@ type Failure struct {
 // Report is the outcome of one Evaluate call.
 type Report struct {
 	Idle, OK, MountPresent, MountStale bool
-	Failures                           []Failure
+	// Starting is set when a running container is still in its healthcheck
+	// start phase (health=starting), which Docker bounds by start_period and
+	// retries: a `docker compose up --wait` may still be in progress.
+	Starting bool
+	Failures []Failure
 }
 
 // Summary renders a short, human-readable status.
@@ -174,6 +178,9 @@ func (c *Checker) Evaluate(ctx context.Context) Report {
 				r.Failures = append(r.Failures, Failure{"containers", svc + ": state=" + found.State})
 			case found.Health != "" && found.Health != "healthy":
 				r.Failures = append(r.Failures, Failure{"containers", svc + ": health=" + found.Health})
+				if found.Health == "starting" {
+					r.Starting = true
+				}
 			}
 		}
 		if stale {

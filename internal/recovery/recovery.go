@@ -26,7 +26,7 @@ type ComposeOps interface {
 // Deps are the external dependencies of a Recoverer.
 type Deps struct {
 	Mounts  func() ([]mountinfo.Entry, error)
-	Abort   func(minor int) error
+	Abort   func(dev uint64) error
 	Detach  func(path string) error
 	Compose ComposeOps
 	Log     *slog.Logger
@@ -66,8 +66,8 @@ func (r *Recoverer) CleanupMount(ctx context.Context, abort bool) error {
 			return fmt.Errorf("refusing to unmount %s: fstype %s is not %s", r.cfg.MountPath, top.FSType, r.cfg.ExpectedFSType)
 		}
 		if abort {
-			if err := r.d.Abort(top.Minor); err != nil {
-				r.d.Log.Warn("fuse abort failed", "minor", top.Minor, "error", err)
+			if err := r.d.Abort(top.Dev()); err != nil {
+				r.d.Log.Warn("fuse abort failed", "dev", top.Dev(), "error", err)
 			}
 		}
 		if err := r.d.Detach(r.cfg.MountPath); err != nil {

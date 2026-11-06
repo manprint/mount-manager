@@ -186,6 +186,12 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 			s.emit(notify.EventStackUp, "all checks passed", 0)
 			return s.cfg.CheckInterval.Duration
 		}
+		// The grace counts only after Docker's start phase: a recovery now
+		// would race a manual `up --wait` still in progress.
+		if r.Starting {
+			s.graceStart = time.Time{}
+			return s.cfg.CheckInterval.Duration
+		}
 		if s.graceStart.IsZero() {
 			s.graceStart = now
 		}
@@ -207,6 +213,12 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 			s.emit(notify.EventStackStopped, "no running containers", 0)
 			return s.cfg.CheckInterval.Duration
 		}
+		if r.Starting {
+			// A container (re)started by hand: not a failure until Docker's
+			// start phase ends.
+			s.o.Log.Info("container starting, check failure not counted", "count", s.failCount, "summary", r.Summary())
+			return s.cfg.CheckInterval.Duration
+		}
 		s.failCount++
 		s.o.Log.Warn("check failed", "count", s.failCount, "summary", r.Summary())
 		if s.failCount >= s.cfg.FailureThreshold {
@@ -219,6 +231,15 @@ func (s *Supervisor) Step(ctx context.Context) time.Duration {
 	case Verifying:
 		if r.OK {
 			return s.recovered()
+		}
+		if r.Idle {
+			// The recovery's `up` succeeded, so an idle stack was stopped on
+			// purpose: honor it as in Monitoring (I-1).
+			s.emit(notify.EventStackStopped, "no running containers (stopped during recovery verification)", s.attempt)
+			s.state = Waiting
+			s.attempt = 0
+			s.failCount = 0
+			return s.cfg.CheckInterval.Duration
 		}
 		if !now.Before(s.verifyDeadline) {
 			s.emit(notify.EventRecoveryFailed, "verify timeout: "+r.Summary(), s.attempt)

@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
+
+	"mount-manager/internal/config"
 )
 
 func TestVersionCommand(t *testing.T) {
@@ -143,5 +148,74 @@ func TestUsageListsCommands(t *testing.T) {
 		if !strings.Contains(out, cmd) {
 			t.Fatalf("usage = %q, want to contain %q", out, cmd)
 		}
+	}
+}
+
+func TestFilePermWarnings(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	composePath := filepath.Join(dir, "compose.yml")
+	for _, p := range []string{cfgPath, composePath} {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withHook := &config.Config{ComposeFile: composePath, Webhook: config.Webhook{URL: "https://user:secret@example.invalid/x"}}
+	noHook := &config.Config{ComposeFile: composePath}
+
+	cases := []struct {
+		name              string
+		cfgMode, compMode os.FileMode
+		cfg               *config.Config
+		want              []string
+	}{
+		{"private", 0o600, 0o644, withHook, nil},
+		{"readable without webhook", 0o644, 0o644, noHook, nil},
+		{"readable with webhook", 0o644, 0o644, withHook, []string{"config readable"}},
+		{"config group writable", 0o664, 0o644, noHook, []string{"config writable"}},
+		{"compose other writable", 0o600, 0o646, withHook, []string{"compose writable"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Chmod(cfgPath, tc.cfgMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(composePath, tc.compMode); err != nil {
+				t.Fatal(err)
+			}
+			got := filePermWarnings(cfgPath, tc.cfg)
+			var kinds []string
+			for _, w := range got {
+				if strings.Contains(w, "secret") && strings.Contains(w, "example.invalid") {
+					t.Errorf("warning leaks the webhook URL: %q", w)
+				}
+				file := "config"
+				if strings.HasPrefix(w, "compose file") {
+					file = "compose"
+				}
+				kind := "readable"
+				if strings.Contains(w, "writable") {
+					kind = "writable"
+				}
+				kinds = append(kinds, file+" "+kind)
+			}
+			if !slices.Equal(kinds, tc.want) {
+				t.Errorf("warnings = %q, want kinds %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShutdownSignals(t *testing.T) {
+	if signal.Ignored(syscall.SIGHUP) {
+		t.Skip("SIGHUP ignored by the test runner")
+	}
+	if !slices.Contains(shutdownSignals(), os.Signal(syscall.SIGHUP)) {
+		t.Fatalf("shutdownSignals() = %v, want SIGHUP included", shutdownSignals())
+	}
+	signal.Ignore(syscall.SIGHUP)
+	defer signal.Reset(syscall.SIGHUP)
+	if slices.Contains(shutdownSignals(), os.Signal(syscall.SIGHUP)) {
+		t.Fatalf("shutdownSignals() includes SIGHUP while it is ignored (nohup)")
 	}
 }

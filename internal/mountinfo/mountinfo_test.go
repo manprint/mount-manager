@@ -178,3 +178,15 @@ func TestParseLongLine(t *testing.T) {
 		t.Fatalf("entries = %d, want 2 with /mnt/x last", len(entries))
 	}
 }
+
+func TestEntryDev(t *testing.T) {
+	cases := []struct {
+		major, minor int
+		want         uint64
+	}{{0, 58, 58}, {8, 1, 8388609}, {259, 3, 259<<20 | 3}}
+	for _, tc := range cases {
+		if got := (Entry{Major: tc.major, Minor: tc.minor}).Dev(); got != tc.want {
+			t.Errorf("Dev(%d:%d) = %d, want %d", tc.major, tc.minor, got, tc.want)
+		}
+	}
+}

@@ -18,12 +18,15 @@ Il supervisore (`internal/supervisor`) è una macchina a stati con un solo gorou
   resta in attesa senza mai avviare recovery [I-1]. Se lo stack è avviato ma non sano da almeno
   `startup_grace`, avvia la recovery (copre il boot: `superdufs` ha `restart: always`, `rclone-mount`
   `restart: no`, quindi dopo un riavvio host lo stack può risultare parzialmente su senza essere sano).
+  La grace inizia a contare solo quando nessun container in esecuzione è più in `health=starting`.
 - **monitoring** — lo stack è sano; i controlli vengono ripetuti ogni `check_interval`. Se lo stack
   torna idle si torna in waiting (evento `stack_stopped`); se un controllo fallisce per
-  `failure_threshold` cicli consecutivi si avvia la recovery.
+  `failure_threshold` cicli consecutivi si avvia la recovery. Un ciclo fallito mentre un container in
+  esecuzione è in `health=starting` (es. riavviato a mano) non viene contato.
 - **verifying** — dopo un tentativo di recovery, si attende fino a `recovery.verify_timeout` che la
   suite di controlli torni tutta positiva; in caso di successo si torna a monitoring, altrimenti si
-  entra in backoff.
+  entra in backoff. Se lo stack torna idle (fermato a mano dopo l'`up` della recovery) si torna in
+  waiting (evento `stack_stopped`) senza altri tentativi [I-1].
 - **backoff** — attesa prima del prossimo tentativo di recovery, con durata calcolata dalla formula
   sotto. Scaduta l'attesa la suite di controlli viene rieseguita: se è tutta positiva si torna in
   monitoring (evento `recovery_succeeded`), se docker non risponde si resta in attesa, altrimenti si
@@ -48,27 +51,32 @@ volta (`docker unavailable, holding` / `docker available again`). Così, ad esem
 
 ### Shutdown
 
-Un `SIGINT`/`SIGTERM` ricevuto mentre è in corso un controllo non produce azioni: il report di quel
+Un `SIGINT`/`SIGTERM`/`SIGHUP` ricevuto mentre è in corso un controllo non produce azioni: il report di quel
 ciclo (probe e richiesta HTTP annullati) viene scartato, quindi nessun conteggio di fallimento, nessun
 cleanup del mount e nessuna recovery. Una recovery interrotta dal segnale non emette `recovery_failed`
-e non tenta il fallback `kill` dopo un `down` interrotto: è l'evento `shutdown` a riportarla (vedi §6).
+e non tenta il fallback `kill` dopo un `down` interrotto: è l'evento `shutdown` a riportarla (vedi §6). `SIGHUP` termina come `SIGTERM`, salvo che sia ignorato
+all'avvio (es. `nohup`): in quel caso resta ignorato.
 
 ### Soglie e grace
 
 - `failure_threshold` (default 3): numero di cicli consecutivi con controllo fallito, in monitoring,
   prima di avviare la recovery.
 - `startup_grace` (default 120s): tempo massimo, in waiting, che uno stack avviato ma non sano può
-  restare tale prima che scatti la recovery. Deve superare il tempo che `rclone-mount` impiega a
-  diventare healthy (healthcheck `start_period: 60s` in `compose.yml`): con un valore più basso la
-  recovery (`compose down`) può partire mentre è ancora in corso un `docker compose up --wait` manuale.
+  restare tale prima che scatti la recovery. Conta solo dopo la fase di avvio di Docker: finché un
+  container in esecuzione è in `health=starting` (limitata da `start_period`, `interval` e `retries`
+  dell'healthcheck) la grace non parte, così la recovery (`compose down`) non può partire mentre è in
+  corso un `docker compose up --wait` manuale. Il limite vale per ogni avvio: un servizio con
+  healthcheck e `restart: always` in crash loop rimetterebbe la grace a zero a ogni riavvio e la
+  recovery non partirebbe (con il `compose.yml` attuale non succede: `rclone-mount` ha `restart: no`,
+  `superdufs` non ha healthcheck).
 
 ### Sequenza di recovery (D6)
 
 Ad ogni tentativo di recovery (`internal/recovery.Recoverer.Recover`), in ordine (I-8):
 
 1. **Cleanup pre-down** del mount host: se il guasto rilevato riguarda mount o probe, prima
-   dell'unmount si scrive `abort` sulla connessione FUSE (fusectl); in ogni caso si esegue il detach
-   lazy (`MNT_DETACH`).
+   dell'unmount si scrive `abort` sulla connessione FUSE (fusectl, directory dal device del mount:
+   `major<<20 | minor`); in ogni caso si esegue il detach lazy (`MNT_DETACH`).
 2. **`docker compose down -t <recovery.down_timeout>`**; se fallisce, fallback a `kill` seguito da
    `down -t 0`.
 3. **Cleanup post-down** del mount host, sempre con abort prima del detach.
@@ -138,7 +146,7 @@ espliciti: [`deploy/config.example.yml`](deploy/config.example.yml).
 | `docker_binary` | stringa | `docker` | Nome o path del binario docker usato per pilotare compose. |
 | `expected_fstype` | stringa | `fuse.rclone` | Filesystem atteso in cima a `mount_path` quando sano. |
 | `check_interval` | durata | `10s` | Intervallo tra un controllo e il successivo mentre lo stack gira. |
-| `check_timeout` | durata | `10s` | Timeout del subprocess di probe per un singolo controllo. |
+| `check_timeout` | durata | `10s` | Timeout del subprocess di probe per un singolo controllo. Deve coprire un listing a freddo della radice del mount: con `--dir-cache-time=30s` rclone la rilegge dal remote circa ogni 30s. Un timeout isolato non avvia la recovery (servono `failure_threshold` cicli consecutivi). |
 | `failure_threshold` | intero | `3` | Cicli falliti consecutivi in monitoring prima della recovery. |
 | `startup_grace` | durata | `120s` | In waiting, tempo tollerato di stack avviato ma non sano prima della recovery. |
 | `log_level` | stringa | `info` | Uno tra `debug`, `info`, `warn`, `error`. |
@@ -168,7 +176,10 @@ Quindi `check_interval: 0s` o `failure_threshold: 0` sono errori di configurazio
 ottenere il default (per usare il default basta omettere la chiave).
 
 Il file può contenere segreti (es. `webhook.headers` con un token): installarlo leggibile solo da root
-(`0600`).
+(`0600`). All'avvio `run` logga un warning se il file di configurazione o `compose_file` sono
+scrivibili da gruppo/altri (chi li scrive controlla cosa esegue il manager, di norma root) o se la
+configurazione è leggibile da altri con un webhook configurato. Non vengono controllati `.env`,
+`./config/rclone.conf` né la directory del progetto.
 
 ## 5. Comandi
 
@@ -180,7 +191,7 @@ mount-manager version
 ```
 
 - **`run`** — avvia la supervisione continua: attesa, monitoraggio, recovery con backoff e notifiche
-  webhook. Gira finché non riceve `SIGINT`/`SIGTERM`, poi emette l'evento `shutdown` ed esce con
+  webhook. Gira finché non riceve `SIGINT`/`SIGTERM`/`SIGHUP`, poi emette l'evento `shutdown` ed esce con
   codice 0. Richiede il binario docker in `PATH` (o a `docker_binary`); errori di configurazione o
   docker mancante restituiscono exit code 3 prima di avviare la supervisione.
 - **`check`** — esegue la suite di controlli una sola volta e stampa un report testuale:
@@ -218,7 +229,7 @@ Eventi (`internal/notify`):
 | `startup` | all'avvio del processo `run`. |
 | `waiting` | all'avvio, subito dopo `startup` (il ritorno in waiting da monitoring emette `stack_stopped`). |
 | `stack_up` | quando lo stack passa da waiting a monitoring (tutti i controlli positivi). |
-| `stack_stopped` | quando, in monitoring, lo stack torna idle (si torna in waiting). |
+| `stack_stopped` | quando, in monitoring o in verifying, lo stack torna idle (si torna in waiting; in verifying `attempt` riporta il tentativo interrotto). |
 | `failure_detected` | quando scatta la recovery (soglia fallimenti in monitoring o grace scaduta in waiting). |
 | `recovery_started` | a ogni tentativo di recovery avviato. |
 | `recovery_succeeded` | quando, in verifying (o allo scadere del backoff), la suite di controlli torna positiva. |
@@ -369,11 +380,16 @@ montata.
   (D7, I-5); se le immagini `rclone/rclone:latest` o `fabiop85/superdufs:v1.5.0` non sono già presenti
   sullo host, la recovery fallisce e ritenta all'infinito con backoff crescente finché le immagini non
   vengono scaricate manualmente.
-- **`down` manuale durante backoff/verifying viene ripristinato**: in verifying lo stato idle viene
-  ignorato (allo scadere di `recovery.verify_timeout` si passa in backoff) e in backoff il tentativo
-  successivo di recovery esegue comunque `down`/`up` (salvo docker non raggiungibile, vedi §2); uno
-  stack fermato a mano in queste fasi viene quindi riavviato. Per fermare davvero lo stack, fermare
-  prima il servizio `mount-manager`.
+- **`down` manuale durante backoff viene ripristinato**: in backoff lo stack può essere fermo per
+  colpa della recovery stessa (`down` riuscito, `up` fallito), quindi lo stato idle non è distinguibile
+  da un arresto manuale e il tentativo successivo esegue comunque `down`/`up` (salvo docker non
+  raggiungibile, vedi §2). Per fermare davvero lo stack, fermare prima il servizio `mount-manager`.
+  In verifying invece l'`up` è riuscito: uno stack idle è stato fermato a mano e viene rispettato.
+- **Variabili di `compose.yml` (`DUFS_UID`, `DUFS_GID`)**: `docker compose` dà precedenza alle
+  variabili della shell rispetto a `.env`, e la recovery gira con l'ambiente del servizio systemd, non
+  con quello della shell. Definirle in `.env` accanto a `compose.yml` (letto tramite
+  `--project-directory`) e non esportarle nella shell, altrimenti uno stack avviato a mano e uno
+  ricreato dalla recovery possono girare con UID/GID diversi.
 - **Lo stato della recovery non sopravvive al riavvio del manager**: nessuno stato viene salvato su
   disco (scelta voluta, per non avere marker spuri che riavvino uno stack fermato apposta). Se il
   manager viene fermato durante una recovery dopo un `down` riuscito e un `up` fallito, lo stack resta

@@ -457,11 +457,11 @@ func TestVerifyingSuccess(t *testing.T) {
 	}
 }
 
-func TestVerifyingIgnoresIdle(t *testing.T) {
+func TestVerifyingIdleGoesWaiting(t *testing.T) {
 	clk := &fakeClock{now: baseTime}
 	n := &recNotifier{}
 	h := &fakeHealth{reports: []health.Report{
-		okReport(), httpFailReport(), httpFailReport(), httpFailReport(), idleReport(),
+		okReport(), httpFailReport(), httpFailReport(), httpFailReport(), idleReport(), idleReport(),
 	}}
 	rec := &fakeRecovery{}
 	sup := newSup(testConfig(), h, rec, clk, n)
@@ -472,13 +472,22 @@ func TestVerifyingIgnoresIdle(t *testing.T) {
 	if sup.State() != Verifying {
 		t.Fatalf("state = %v, want Verifying", sup.State())
 	}
-	before := len(n.all())
-	sup.Step(context.Background()) // idle, before deadline
-	if sup.State() != Verifying {
-		t.Fatalf("state = %v, want Verifying (idle ignored)", sup.State())
+	sup.Step(context.Background()) // stopped by hand while verifying
+	if sup.State() != Waiting {
+		t.Fatalf("state = %v, want Waiting", sup.State())
 	}
-	if len(n.all()) != before {
-		t.Fatalf("events changed: %v", n.all())
+	events := n.all()
+	last := events[len(events)-1]
+	if last.Event != notify.EventStackStopped || last.Attempt != 1 {
+		t.Fatalf("last event = %+v, want stack_stopped attempt 1", last)
+	}
+	if sup.attempt != 0 {
+		t.Fatalf("attempt = %d, want 0", sup.attempt)
+	}
+	clk.now = baseTime.Add(time.Hour)
+	sup.Step(context.Background()) // idle long past verify_timeout: no recovery (I-1)
+	if len(rec.calls) != 1 || sup.State() != Waiting {
+		t.Fatalf("recover calls = %d, state = %v; want 1, Waiting", len(rec.calls), sup.State())
 	}
 }
 
@@ -1025,5 +1034,64 @@ func TestStaleCleanupErrorLoggedOnChangeOnly(t *testing.T) {
 	sup.Step(context.Background())
 	if c := logs.count("stale mount cleanup failed"); c != 3 {
 		t.Fatalf("error logged %d times after a success in between, want 3", c)
+	}
+}
+
+func startingReport() health.Report {
+	return health.Report{Starting: true, Failures: []health.Failure{{Check: "containers", Detail: "rclone-mount: health=starting"}}}
+}
+
+func TestWaitingGraceHeldWhileStarting(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		startingReport(), startingReport(), probeFailReport(), probeFailReport(), probeFailReport(),
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+
+	for _, at := range []time.Duration{0, 200 * time.Second} {
+		clk.now = baseTime.Add(at)
+		sup.Step(context.Background())
+	}
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called while a container is starting")
+	}
+
+	clk.now = baseTime.Add(201 * time.Second) // starting over: grace begins
+	sup.Step(context.Background())
+	clk.now = baseTime.Add(320 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 0 {
+		t.Fatalf("Recover called at 119s of grace, want none")
+	}
+	clk.now = baseTime.Add(321 * time.Second)
+	sup.Step(context.Background())
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1 after the grace", len(rec.calls))
+	}
+}
+
+func TestMonitoringStartingNotCounted(t *testing.T) {
+	clk := &fakeClock{now: baseTime}
+	n := &recNotifier{}
+	h := &fakeHealth{reports: []health.Report{
+		okReport(), httpFailReport(),
+		startingReport(), startingReport(), startingReport(), startingReport(),
+		httpFailReport(), httpFailReport(),
+	}}
+	rec := &fakeRecovery{}
+	sup := newSup(testConfig(), h, rec, clk, n)
+	sup.Start()
+	for i := 0; i < 7; i++ {
+		sup.Step(context.Background())
+	}
+	if len(rec.calls) != 0 || sup.State() != Monitoring {
+		t.Fatalf("recover calls = %d, state = %v; want 0, Monitoring", len(rec.calls), sup.State())
+	}
+	sup.Step(context.Background()) // third counted failure
+	if len(rec.calls) != 1 {
+		t.Fatalf("Recover calls = %d, want 1", len(rec.calls))
 	}
 }
