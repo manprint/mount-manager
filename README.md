@@ -266,13 +266,13 @@ L'installazione è manuale; non esiste un installer automatico.
    [release GitHub](https://github.com/manprint/mount-manager/releases) (`linux-amd64` o `linux-arm64`,
    con `SHA256SUMS`):
    ```
-   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.0/mount-manager-linux-amd64
-   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.0/SHA256SUMS
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.1/mount-manager-linux-amd64
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.1/SHA256SUMS
    sha256sum --ignore-missing -c SHA256SUMS
    mv mount-manager-linux-amd64 bin/mount-manager
    ```
    oppure compilandolo (Go 1.27; con `GOTOOLCHAIN=auto` il comando `go` scarica da solo la toolchain
-   `go1.27.2` indicata in `go.mod`):
+   `go1.27.3` indicata in `go.mod`):
    ```
    go build -trimpath -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o bin/mount-manager ./cmd/mount-manager
    ```
