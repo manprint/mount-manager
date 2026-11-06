@@ -266,8 +266,8 @@ L'installazione è manuale; non esiste un installer automatico.
    [release GitHub](https://github.com/manprint/mount-manager/releases) (`linux-amd64` o `linux-arm64`,
    con `SHA256SUMS`):
    ```
-   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.0.0/mount-manager-linux-amd64
-   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.0.0/SHA256SUMS
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.0/mount-manager-linux-amd64
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.0/SHA256SUMS
    sha256sum --ignore-missing -c SHA256SUMS
    mv mount-manager-linux-amd64 bin/mount-manager
    ```
