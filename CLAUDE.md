@@ -16,7 +16,7 @@ D6..D17): `README.md`. Spec: `Specifications.txt`. Plan/audit history: `docs/pla
 ```
 gofmt -l . ; go vet ./... ; go vet -tags e2e ./test/e2e/
 staticcheck ./... ; staticcheck -tags e2e ./test/e2e/   # v0.8.2
-govulncheck ./...                                        # v1.9.0
+govulncheck ./...                                        # v1.10.0
 go test -count=1 -race ./...
 ```
 

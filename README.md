@@ -266,13 +266,13 @@ L'installazione è manuale; non esiste un installer automatico.
    [release GitHub](https://github.com/manprint/mount-manager/releases) (`linux-amd64` o `linux-arm64`,
    con `SHA256SUMS`):
    ```
-   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.1/mount-manager-linux-amd64
-   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.1/SHA256SUMS
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.2/mount-manager-linux-amd64
+   curl -fsSLO https://github.com/manprint/mount-manager/releases/download/v1.1.2/SHA256SUMS
    sha256sum --ignore-missing -c SHA256SUMS
    mv mount-manager-linux-amd64 bin/mount-manager
    ```
    oppure compilandolo (Go 1.27; con `GOTOOLCHAIN=auto` il comando `go` scarica da solo la toolchain
-   `go1.27.3` indicata in `go.mod`):
+   `go1.27.4` indicata in `go.mod`):
    ```
    go build -trimpath -ldflags "-s -w -X main.version=$(git describe --tags --always)" -o bin/mount-manager ./cmd/mount-manager
    ```
@@ -335,7 +335,7 @@ Precondizioni per gli e2e (non-root e root):
 
 - lo stack di produzione è fermo: nessun container `rclone-mount` o `superdufs` esistente (`docker ps -a`);
 - la porta `127.0.0.1:5000` è libera;
-- le immagini `rclone/rclone:latest` e `fabiop85/superdufs:v1.5.0` sono presenti (o scaricabili: il test le
+- le immagini `rclone/rclone:latest` e `fabiop85/superdufs:v1.6.1` sono presenti (o scaricabili: il test le
   scarica automaticamente se mancano);
 - la work dir `test/e2e/.work` sta su un mount con propagazione `shared` (il bind di `rclone-mount` usa
   `rshared`; altrimenti docker risponde `... is mounted on ... but it is not a shared mount`). Se il
@@ -377,7 +377,7 @@ montata.
 ## 9. Limiti noti
 
 - **`--pull never` richiede immagini locali**: ogni `up` eseguito dalla recovery usa `--pull never`
-  (D7, I-5); se le immagini `rclone/rclone:latest` o `fabiop85/superdufs:v1.5.0` non sono già presenti
+  (D7, I-5); se le immagini `rclone/rclone:latest` o `fabiop85/superdufs:v1.6.1` non sono già presenti
   sullo host, la recovery fallisce e ritenta all'infinito con backoff crescente finché le immagini non
   vengono scaricate manualmente.
 - **`down` manuale durante backoff viene ripristinato**: in backoff lo stack può essere fermo per

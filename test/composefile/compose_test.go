@@ -157,8 +157,8 @@ func TestComposeUnchangedFields(t *testing.T) {
 	}
 
 	image, ok := superdufs["image"].(string)
-	if !ok || image != "fabiop85/superdufs:v1.5.0" {
-		t.Fatalf("services.superdufs.image = %v, want fabiop85/superdufs:v1.5.0", superdufs["image"])
+	if !ok || image != "fabiop85/superdufs:v1.6.1" {
+		t.Fatalf("services.superdufs.image = %v, want fabiop85/superdufs:v1.6.1", superdufs["image"])
 	}
 
 	ports := asSlice(t, superdufs["ports"], "services.superdufs.ports")

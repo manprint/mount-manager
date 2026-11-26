@@ -70,7 +70,7 @@ services:
       - --checkers=2
 
   superdufs:
-    image: fabiop85/superdufs:v1.5.0
+    image: fabiop85/superdufs:v1.6.1
     pull_policy: always
     container_name: superdufs
     restart: always

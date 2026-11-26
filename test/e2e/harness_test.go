@@ -155,7 +155,7 @@ func preflight(t *testing.T) {
 	}
 	ln.Close()
 
-	images := []string{"rclone/rclone:latest", "fabiop85/superdufs:v1.5.0"}
+	images := []string{"rclone/rclone:latest", "fabiop85/superdufs:v1.6.1"}
 	// Pull missing images directly so the repository project directory is
 	// never used as a compose project (I-6).
 	for _, img := range images {
